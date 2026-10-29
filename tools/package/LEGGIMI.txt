@@ -1,0 +1,28 @@
+VoiceChat @VERSION@ (test) - voice chat di prossimita' per NightCoop
+=====================================================================
+
+REQUISITI
+- Cyberpunk 2077 con NightCoop gia' funzionante (RED4ext e' incluso in NightCoop).
+- Cuffie consigliate: senza, gli altri sentono la propria voce dalle tue casse.
+
+INSTALLAZIONE
+1. Chiudi il gioco.
+2. Estrai lo zip nella cartella del gioco, quella che contiene "bin" e "red4ext".
+   Deve risultare: <gioco>\red4ext\plugins\VoiceChat\VoiceChat.dll
+3. Avvia il gioco come al solito.
+
+USO
+- Tieni premuto il tasto laterale del mouse (mouse 4, quello in basso) per parlare.
+- Senti gli altri giocatori entro 48 metri; il volume cala con la distanza
+  e la voce arriva da sinistra/destra in base a dove si trovano.
+- Microfono e uscita sono quelli predefiniti di Windows.
+
+CONFIGURAZIONE (red4ext\plugins\VoiceChat\config.ini, a gioco chiuso)
+- ptt: tasto per parlare (mouse4, mouse5, una lettera, F1-F12).
+- volume / mic_gain: volume degli altri / del tuo microfono.
+- party: scrivi lo stesso nome di party degli amici per sentirvi a qualsiasi distanza.
+- Non cambiare "server" e "room" se non te lo chiedono.
+
+SE QUALCOSA NON VA
+Mandami il file piu' recente di:
+  <gioco>\red4ext\logs\voicechat-*.log

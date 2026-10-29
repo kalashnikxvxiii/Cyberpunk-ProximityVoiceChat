@@ -1,0 +1,11 @@
+/target/
+build/
+out/
+.cache/
+.vscode/
+*.dll
+*.pdb
+*.lib
+*.exp
+/vendor/xwin/
+/dist/

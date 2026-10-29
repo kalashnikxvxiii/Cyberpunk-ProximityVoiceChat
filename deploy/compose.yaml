@@ -1,0 +1,14 @@
+# Voice server next to the NightCoop hub. Needs UDP 47900 forwarded on the router.
+services:
+  vc-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: vc-server:local
+    container_name: vc-server
+    network_mode: host
+    # vc-server is PID 1 and has no signal handlers: tini makes Ctrl+C / stop work.
+    init: true
+    restart: unless-stopped
+    # Add "--echo" to hear your own voice back from where you stood when joining.
+    command: ["--bind", "0.0.0.0:47900", "--range", "48"]

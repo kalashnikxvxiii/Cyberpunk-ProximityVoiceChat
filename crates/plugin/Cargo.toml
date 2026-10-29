@@ -1,0 +1,17 @@
+[package]
+name = "voice-chat"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+name = "VoiceChat"
+crate-type = ["cdylib"]
+
+[dependencies]
+red4ext-rs = { git = "https://github.com/jac3km4/red4ext-rs", rev = "v0.11.2" }
+cpal = "0.18"
+opus = "0.4"
+ringbuf = "0.5"
+windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+vc-protocol = { path = "../protocol" }

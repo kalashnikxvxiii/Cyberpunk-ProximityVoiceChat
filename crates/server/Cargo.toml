@@ -1,0 +1,8 @@
+[package]
+name = "vc-server"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+vc-protocol = { path = "../protocol" }
