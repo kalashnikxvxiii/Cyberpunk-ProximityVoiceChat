@@ -1,0 +1,72 @@
+name: Release
+
+# Push a tag v<version> (the version in Cargo.toml, with its section in CHANGELOG.md) to publish the
+# mod's zips as a GitHub Release. A tag with a suffix (v0.2.0-rc1) makes a pre-release, for testing.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: tools/fetch-steamaudio.sh
+        shell: bash
+      - run: cargo build --release --locked -p voice-chat -p vc-server
+        env:
+          # bindgen uses the runner's libclang, older than what the newest MSVC STL checks for;
+          # it only reads the headers, so the version check can be skipped.
+          BINDGEN_EXTRA_CLANG_ARGS: -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            target/release/VoiceChat.dll
+            target/release/vc-server.exe
+
+  release:
+    name: Package and publish
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the tag against Cargo.toml and CHANGELOG.md
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          [ "${tag%%-*}" = "$version" ] || { echo "tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml"; exit 1; }
+          grep -q "^## $version\$" CHANGELOG.md || { echo "CHANGELOG.md has no '## $version' section"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          [ "$tag" = "$version" ] && echo "pre=" >> "$GITHUB_OUTPUT" || echo "pre=--prerelease" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: target/x86_64-pc-windows-msvc/release
+      - run: sudo apt-get update && sudo apt-get install -y zip
+      - run: cargo build --release --locked -p vc-server
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=.
+      - run: VC_PREBUILT=1 tools/package.sh
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            cat "dist/NOTES-$V.md"
+            printf '\n## Install\n\nExtract `VoiceChat-%s.zip` into the game folder (the one with `bin` and `red4ext`), then open the CET overlay: the guided setup starts. Needs NightCoop and Cyber Engine Tweaks; every player needs the same version. `VoiceChat-relay-%s.zip` is only for manual mode without NightCoop.\n' "$V" "$V"
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" ${{ steps.version.outputs.pre }} \
+            --title "VoiceChat $GITHUB_REF_NAME" --notes-file notes.md \
+            "dist/VoiceChat-$V.zip" "dist/VoiceChat-relay-$V.zip" "dist/SHA256SUMS-$V.txt"

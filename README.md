@@ -21,6 +21,9 @@ Requirements: Cyberpunk 2077 with [NightCoop](https://nightcoop.net/) (RED4ext c
 menu, guided setup, HUD icon, walls and reverb, [Cyber Engine Tweaks](https://www.nexusmods.com/cyberpunk2077/mods/107).
 Every player in the session needs VoiceChat, same version.
 
+Download: [Releases](https://github.com/kalashnikxvxiii/Cyberpunk-ProximityVoiceChat/releases) (also on
+Nexus Mods).
+
 1. Close the game.
 2. Extract `VoiceChat-<version>.zip` into the game folder (the one with `bin` and `red4ext`). Updating:
    overwrite; your settings in `red4ext\plugins\VoiceChat\config.ini` are kept.
@@ -72,6 +75,15 @@ tools/build-plugin.sh              # → target/x86_64-pc-windows-msvc/release/V
 tools/install.sh                   # into the game (CP2077_DIR to change the path), with the game closed
 tools/package.sh                   # → dist/VoiceChat-<v>.zip and dist/VoiceChat-relay-<v>.zip
 ```
+
+## Releasing
+
+1. Set the version in `Cargo.toml` (`[workspace.package]`) and add its `## <version>` section to
+   [CHANGELOG.md](CHANGELOG.md).
+2. Commit, then tag and push: `git tag v<version> && git push origin v<version>`.
+3. The Release workflow builds the DLL and the relay on Windows, the Linux relay, packages both zips with
+   `tools/package.sh` and publishes a GitHub Release with that section as notes, plus `SHA256SUMS`.
+   A tag with a suffix (`v0.3.0-rc1`) publishes a pre-release, for testing.
 
 ## Relay server (optional)
 
