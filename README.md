@@ -1,5 +1,7 @@
 # VoiceChat (Cyberpunk 2077 · NightCoop)
 
+[![CI](https://github.com/kalashnikxvxiii/Cyberpunk-ProximityVoiceChat/actions/workflows/ci.yml/badge.svg)](https://github.com/kalashnikxvxiii/Cyberpunk-ProximityVoiceChat/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Proximity voice chat for [NightCoop](https://nightcoop.net/) co-op sessions: install it and it works.
 Voice goes through NightCoop's channels (its SDK): no server, no addresses to exchange, no ports to open.
 
