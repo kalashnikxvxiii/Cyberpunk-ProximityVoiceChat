@@ -173,6 +173,11 @@ function api.capturedKey()
     return call("VoiceChat_CapturedKey") or 0
 end
 
+-- A random room code for manual mode (the DLL draws it).
+function api.newRoomCode()
+    return call("VoiceChat_NewRoomCode") or ""
+end
+
 function api.keyName(vk)
     return call("VoiceChat_KeyName", vk) or tostring(vk)
 end

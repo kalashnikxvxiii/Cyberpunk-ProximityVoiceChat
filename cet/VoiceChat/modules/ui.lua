@@ -275,6 +275,28 @@ local function tabConnection(state)
     else
         textInput(tr("Server (indirizzo:porta#impronta)", "Server (address:port#fingerprint)"), s, "server")
         textInput(tr("Codice stanza", "Room code"), s, "room")
+        if ImGui.Button(tr("Nuovo codice casuale", "New random code")) then
+            local code = api.newRoomCode()
+            if code ~= "" then
+                inputs.room = nil
+                set("room", code)
+                s.room = code
+            end
+        end
+        -- Room keys come from the code: a short one can be guessed offline by whoever runs the server.
+        local room = (s.room or ""):gsub("[%s%-]", "")
+        if room ~= "" and #room < 12 then
+            ImGui.TextColored(
+                1.0,
+                0.78,
+                0.30,
+                1,
+                tr(
+                    "Codice corto: chi gestisce il server potrebbe indovinarlo e ascoltarvi. Usa un codice casuale e passalo in privato.",
+                    "Short code: whoever runs the server could guess it and listen in. Use a random code and share it privately."
+                )
+            )
+        end
         textInput(tr("Nome (vuoto = nome NightCoop)", "Name (empty = NightCoop name)"), s, "name")
         if (s.server_key or "") ~= "" then
             ImGui.Text(tr("Chiave del server salvata: ", "Saved server key: ") .. s.server_key)

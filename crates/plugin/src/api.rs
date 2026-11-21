@@ -31,6 +31,7 @@ pub fn exports() -> impl Exportable {
         GlobalExport(global!(c"VoiceChat_CaptureKey", capture_key)),
         GlobalExport(global!(c"VoiceChat_CapturedKey", captured_key)),
         GlobalExport(global!(c"VoiceChat_KeyName", key_name)),
+        GlobalExport(global!(c"VoiceChat_NewRoomCode", new_room_code)),
         GlobalExport(global!(c"VoiceChat_JoinParty", join_party)),
         GlobalExport(global!(c"VoiceChat_LeaveParty", leave_party)),
         GlobalExport(global!(c"VoiceChat_Log", log)),
@@ -292,6 +293,11 @@ fn event(level: String, phase: String, code: String, detail: String) {
 /// The CET mod's problem went away (e.g. the HUD icon attached after all).
 fn resolve_event(code: String) {
     crate::events::resolve(&code);
+}
+
+/// A random room code for manual mode (80 bits): typed names can be guessed offline by whoever runs the relay.
+fn new_room_code() -> String {
+    vc_protocol::crypto::fingerprint(&vc_protocol::crypto::random_bytes::<32>())
 }
 
 fn join_party(name: String) {

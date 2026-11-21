@@ -31,6 +31,10 @@ jobs:
       - run: tools/fetch-steamaudio.sh
         shell: bash
       - run: cargo build --release --locked -p voice-chat -p vc-server
+        env:
+          # bindgen uses the runner's libclang, older than what the newest MSVC STL checks for;
+          # it only reads the headers, so the version check can be skipped.
+          BINDGEN_EXTRA_CLANG_ARGS: -D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH
       - uses: actions/upload-artifact@v4
         with:
           name: voicechat-windows

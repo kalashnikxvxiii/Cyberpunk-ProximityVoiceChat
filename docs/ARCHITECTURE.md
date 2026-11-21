@@ -33,14 +33,16 @@ frame).
 |---|---|
 | Eavesdropping on the network | NightCoop's links are encrypted; on top, voice is sealed with the room key (`protocol/e2e.rs`) |
 | Strangers in the chat | The key reaches only session partners with the mod; a new one for every session |
-| A guest posing as another (the host relays between guests) | Seal bound to the sender: it must match NightCoop's `from` |
+| A guest posing as another | NightCoop's `from` names the sender, and the seal is bound to it: a guest can't pass voice off as another's. The host is trusted here: it holds the room key and relays between guests, so it could seal voice under any guest's id |
 | Replay, old packets | Per-sender sequence: only newer data is accepted |
 | Malformed data from a partner | Sizes, frame count and version checked; per-sender limit; text passed through `cleanText`; no panics (fuzzed with random data) |
 | A guest writing to the shared state | `stateRequest` refuses everything |
 | Fake server (manual) | Pinned key fingerprint (`#FINGERPRINT` or TOFU), warnings in Diagnostics |
+| The relay guessing the room code (manual) | Voice keys come from the room code through Argon2id (32 MiB, 3 passes); "New random code" draws 80 bits, and the menu warns about codes under 12 characters |
 | Server abuse (manual) | Per-IP, global and per-room limits; names cleaned and capped |
 
-Remaining trust: the session's host sees all of the mod's data (it holds the key). The mod exposes no IP
+Remaining trust: the session's host sees all of the mod's data (it holds the key) and could impersonate a
+guest. In manual mode, the room code is the key: anyone who knows it can listen and talk. The mod exposes no IP
 address: in a NightCoop session it opens no ports and talks to nobody except through NightCoop.
 
 ## Audio (`crates/dsp`, `plugin/audio.rs`)

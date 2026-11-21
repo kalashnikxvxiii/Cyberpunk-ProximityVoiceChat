@@ -22,4 +22,6 @@ server:
 In una sessione NightCoop non serve: la voce passa da NightCoop.
 
 Il server smista la voce ma non puo' ascoltarla: e' cifrata da un
-giocatore all'altro.
+giocatore all'altro, con una chiave che viene dal codice stanza. Usate
+"Nuovo codice casuale" accanto al codice stanza e passatelo in privato: un
+codice corto potrebbe indovinarlo chi gestisce il server.

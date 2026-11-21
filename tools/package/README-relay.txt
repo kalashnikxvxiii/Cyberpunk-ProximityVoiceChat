@@ -22,4 +22,6 @@ server:
 In a NightCoop session you don't need it: voice goes through NightCoop.
 
 The server routes the voice but can't listen to it: it is encrypted from
-player to player.
+player to player, with a key that comes from the room code. Use "New random
+code" next to the room code and share it privately: a short code could be
+guessed by whoever runs the server.
