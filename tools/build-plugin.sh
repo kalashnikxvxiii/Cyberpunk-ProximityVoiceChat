@@ -7,6 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TARGET=x86_64-pc-windows-msvc
+tools/fetch-steamaudio.sh
 cargo fetch --target "$TARGET" >/dev/null
 
 sdk_root=$(cargo metadata --format-version 1 --filter-platform "$TARGET" |
@@ -27,5 +28,10 @@ done
 # cargo-xwin sets CXXFLAGS_<target> itself, so pass the overlay via CPATH.
 export CPATH="$overlay"
 export BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_msvc="-I$overlay"
+# Keep build machine paths (home directory, user name) out of the binary:
+# Rust via RUSTFLAGS, the C/C++ dependencies via clang-cl's CL variable
+# (prepended to every command line).
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=~ --remap-path-prefix=$PWD=."
+export CL="/clang:-ffile-prefix-map=$HOME=~"
 cargo xwin build --release --target "$TARGET" -p voice-chat "$@"
 echo "→ target/$TARGET/release/VoiceChat.dll"

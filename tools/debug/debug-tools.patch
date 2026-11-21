@@ -1,0 +1,1720 @@
+diff --git a/cet/VoiceChat/init.lua b/cet/VoiceChat/init.lua
+index 538ecfd..ff182e6 100644
+--- a/cet/VoiceChat/init.lua
++++ b/cet/VoiceChat/init.lua
+@@ -17,7 +17,7 @@ local state = {
+     meters = { input = -100, processed = -100, gate = false, transmitting = false, threshold = -45 },
+     players = {},
+ }
+-local timers = { settings = 99, fast = 0, inGame = 0 }
++local timers = { settings = 99, fast = 0, inGame = 0, test = 0 }
+ local warnedNoHud = false
+ 
+ local SETTING_KEYS = {
+@@ -110,6 +110,11 @@ registerForEvent("onUpdate", function(dt)
+     end
+     acoustics.update(dt, state.settings)
+     personal.update(dt)
++    timers.test = timers.test + dt
++    if timers.test >= 0.2 then
++        timers.test = 0
++        state.test = api.testStatus()
++    end
+     wizard.update(dt, state)
+     -- Menus (the main one too) have no crosshair: only time in the world counts.
+     if not hud.hooked and not warnedNoHud and state.status.in_game == "1" and personal.reason ~= "menu" then
+@@ -131,6 +136,9 @@ end)
+ 
+ registerForEvent("onDraw", function()
+     if not overlay then
++        if api.available then
++            ui.drawTestHud(state)
++        end
+         return
+     end
+     local firstRun = api.available and state.settings.setup_done == "off" and not wizard.finished
+diff --git a/cet/VoiceChat/modules/acoustics.lua b/cet/VoiceChat/modules/acoustics.lua
+index 7466deb..aee09ee 100644
+--- a/cet/VoiceChat/modules/acoustics.lua
++++ b/cet/VoiceChat/modules/acoustics.lua
+@@ -22,7 +22,7 @@
+ local api = require("modules/api")
+ local tr = require("modules/i18n").tr
+ 
+-local A = {}
++local A = { debug = {} }
+ 
+ local HEAD = 1.6
+ local PROBE_DIRS = 12
+@@ -53,8 +53,8 @@ local CAR_GAIN = 0.3
+ local CAR_CUTOFF = 1000
+ local CAR_DROP = HEAD - 0.9
+ -- Glass panes on the air path: single glazing, about -26 dB, highs gone.
+--- shortcut: which collision group holds shop windows is a guess, not checked in
+--- game; panes in Static already count as thin walls.
++-- shortcut: which collision group holds shop windows is a guess until the
++-- in-game probe (Diagnostics) shows it; panes in Static already count as thin walls.
+ local GLASS_NAMES = { "Destructible", "Glass" }
+ local glassGroups = nil
+ -- About -36 dB: a shop window lets speech through faintly (at -30 it still
+@@ -63,7 +63,7 @@ local GLASS_GAIN = 0.016
+ local GLASS_CUTOFF = 900
+ local GLASS_MAX_THICK = 0.12
+ -- Closed doors aren't Static: in game they block the player and move (they
+--- show in PlayerBlocker and Dynamic at the same spot, in game 2026-11-19).
++-- show in PlayerBlocker and Dynamic at the same spot, Diagnostics 2026-11-19).
+ -- An interior door: about -12 dB (gaps around it let speech through), highs
+ -- muffled but not gone (at 700 Hz the voice lost its place in our head).
+ local DOOR_GROUPS = { "PlayerBlocker", "Dynamic" }
+@@ -518,7 +518,7 @@ local CROUCH = 1.0
+ 
+ -- Our ears above our feet: the first-person camera's height when it reads
+ -- sensibly (crouching, seated, ducking all count), else from crouching.
+--- `A.earFrom` says which (camera, crouch, stand).
++-- `A.ear` and `A.earFrom` show in Environment > diagnostics.
+ local function earHeight(player, feet)
+     local ok, cam = pcall(function()
+         return player:GetFPPCameraComponent():GetLocalToWorld().W
+@@ -541,8 +541,28 @@ local function earHeight(player, feet)
+ end
+ A.ear, A.earFrom = HEAD, "?"
+ 
++-- The test voice's id (see the DLL's testvoice).
++local TEST_ID = 65534
++local PROBE_NAMES = {
++    "Static", "Dynamic", "Terrain", "Destructible", "DestructibleCluster", "Glass", "Visibility", "Audible",
++    "Shooting", "Interaction", "Collider", "Vehicle", "Water", "PlayerBlocker", "NPCBlocker",
++}
++
++-- What stands on the straight line from L to S, group by group ("Static 2.1 m,
++-- Glass 2.1 m"): shown with the test voice, to learn what doors and windows are.
++local function lineGroups(L, S)
++    local out = {}
++    for _, name in ipairs(PROBE_NAMES) do
++        local ok, _, d = pcall(hit, L, S, { CName.new(name) })
++        if ok and d then
++            out[#out + 1] = string.format("%s %.1f m", name, d)
++        end
++    end
++    return #out > 0 and table.concat(out, ", ") or tr("niente", "nothing")
++end
++
+ -- Where a path seems to come from (its first opening, as far as the sound
+--- travelled), its loudness and cutoff.
++-- travelled), its loudness and cutoff, and what it is.
+ local function describe(L, best)
+     local path, len, turn = best.points, best.len, best.turn
+     local first = path[2]
+@@ -551,13 +571,17 @@ local function describe(L, best)
+     local from = { x = L.x + (first.x - L.x) * t, y = L.y + (first.y - L.y) * t, z = L.z + (first.z - L.z) * t }
+     -- Diffraction: quieter and darker the sharper the turn.
+     local cutoff = 18000 * math.max(0.03, (1 - turn / 200) ^ 2)
++    local kind = #path == 2 and tr("diretto", "direct")
++        or string.format(tr("%d punti, %.0f m, curva %.0f°", "%d points, %.0f m, bend %.0f°"), #path - 2, len, turn)
+     if best.glass > 0 then
+         cutoff = math.min(cutoff, GLASS_CUTOFF)
++        kind = kind .. string.format(tr(" + %d vetri", " + %d glass panes"), best.glass)
+     end
+     if best.doors > 0 then
+         cutoff = math.min(cutoff, DOOR_CUTOFF)
++        kind = kind .. string.format(tr(" + %d porte chiuse", " + %d closed doors"), best.doors)
+     end
+-    return from, best.gain, cutoff
++    return from, best.gain, cutoff, kind
+ end
+ 
+ -- `gain` followed in dB (see SMOOTH), per `key`.
+@@ -569,6 +593,10 @@ local function smoothed(key, gain)
+     return prev > SILENT_DB + 0.5 and 10 ^ (prev / 20) or 0
+ end
+ 
++local function db(gain)
++    return gain > 0 and string.format("%.0f dB", 20 * math.log10(gain)) or tr("muta", "silent")
++end
++
+ -- Probes are redone as soon as anyone moves: probes from a metre back made what
+ -- we hear depend on where we came from (V3). Standing still reuses them.
+ local PROBE_MOVE = 0.05
+@@ -579,6 +607,7 @@ local function updatePaths(L, speakers)
+         listenerProbes = probes(L)
+         listenerProbes.origin = L
+     end
++    A.debug = {}
+     for _, s in ipairs(speakers) do
+         local S = head(s.pos, s.ear)
+         local cached = speakerProbes[s.id]
+@@ -588,36 +617,44 @@ local function updatePaths(L, speakers)
+             speakerProbes[s.id] = cached
+         end
+         local best, other = airPath(L, S, cached)
+-        local from, gain, cutoff
++        local from, gain, cutoff, kind
+         if best then
+-            from, gain, cutoff = describe(L, best)
++            from, gain, cutoff, kind = describe(L, best)
+         else
+             local thick = wallThickness(L, S)
+             from = S
+             if thick <= THIN_WALL then
+-                gain, cutoff = 0.18, 500
++                gain, cutoff, kind = 0.18, 500, string.format(tr("muro sottile %.2f m", "thin wall %.2f m"), thick)
+             elseif thick <= MEDIUM_WALL then
+-                gain, cutoff = 0.06, 300
++                gain, cutoff, kind = 0.06, 300, string.format(tr("muro %.2f m", "wall %.2f m"), thick)
+             else
+-                gain, cutoff = 0, 200
++                gain, cutoff, kind = 0, 200, string.format(tr("muro spesso %.2f m", "thick wall %.2f m"), thick)
+             end
+         end
+         local car = carBetween(L, S)
+         if gain > 0 and car then
+-            gain, cutoff = gain * CAR_GAIN, math.min(cutoff, CAR_CUTOFF)
++            gain, cutoff, kind = gain * CAR_GAIN, math.min(cutoff, CAR_CUTOFF), kind .. tr(" + auto", " + car")
+         end
+         gain = smoothed(s.id, gain)
+         api.setPath(s.id, from, gain, cutoff)
++        kind = kind .. string.format(" (%s)", db(gain))
+         -- The second way in, or silence there.
+-        local from2, gain2, cutoff2 = from, 0, cutoff
++        local from2, gain2, cutoff2, kind2 = from, 0, cutoff, nil
+         if other then
+-            from2, gain2, cutoff2 = describe(L, other)
++            from2, gain2, cutoff2, kind2 = describe(L, other)
+             if car then
+                 gain2, cutoff2 = gain2 * CAR_GAIN, math.min(cutoff2, CAR_CUTOFF)
+             end
+         end
+         gain2 = smoothed(s.id .. "+", gain2)
+         api.setPathAlt(s.id, from2, gain2, cutoff2)
++        if kind2 and gain2 > 0 then
++            kind = kind .. string.format(tr("; e %s (%s)", "; and %s (%s)"), kind2, db(gain2))
++        end
++        A.debug[s.id] = kind
++        if s.id == TEST_ID then
++            A.line = lineGroups(L, S)
++        end
+     end
+ end
+ 
+@@ -730,6 +767,7 @@ local function updateSurroundings(L)
+     env.wet = env.wet + (wet - env.wet) * k
+     env.size = env.size + (size - env.size) * k
+     env.damp = env.damp + (damp - env.damp) * k
++    A.env = { wet = env.wet, size = env.size, enclosure = enclosure, sky = skyOpen / skyWeight, clutter = clutter }
+     api.setSurroundings(env.wet, env.size, env.damp)
+ end
+ 
+@@ -777,8 +815,14 @@ function A.update(dt, settings)
+         local speakers = api.speakers()
+         -- Every voice gets its classic path, also those Steam Audio works
+         -- out in the DLL: there it is the way around when Steam Audio finds
+-        -- none (its rebounds missing).
++        -- none (its rebounds missing). Their line shows both.
+         local ok, err = pcall(updatePaths, L, speakers)
++        for _, s in ipairs(speakers) do
++            if (s.how or "") ~= "" then
++                local classic = A.debug[s.id]
++                A.debug[s.id] = "Steam Audio: " .. s.how .. (classic and (tr("; classico: ", "; classic: ") .. classic) or "")
++            end
++        end
+         if not ok then
+             A.report(err)
+         end
+@@ -796,6 +840,31 @@ function A.update(dt, settings)
+     end
+ end
+ 
++-- Which collision groups a ray straight ahead of the camera hits, and how
++-- far: to find out in game what a shop window or a table is made of.
++function A.probeGroups()
++    local player = Game.GetPlayer()
++    local space = Game.GetSpatialQueriesSystem()
++    if not player or not space then
++        return {}
++    end
++    local f = Game.GetCameraSystem():GetActiveCameraForward()
++    local a = head(player:GetWorldPosition(), A.ear)
++    local b = { x = a.x + f.x * 30, y = a.y + f.y * 30, z = a.z + f.z * 30 }
++    local out = {}
++    for _, name in ipairs(PROBE_NAMES) do
++        local ok, hitOk, res = pcall(function()
++            return space:SyncRaycastByCollisionGroup(v4(a.x, a.y, a.z), v4(b.x, b.y, b.z), CName.new(name), false, false)
++        end)
++        local d = nil
++        if ok and hitOk and res and res.position and not (res.position.x == 0 and res.position.y == 0 and res.position.z == 0) then
++            d = dist(a, res.position)
++        end
++        out[#out + 1] = { name = name, dist = d, err = not ok and tostring(hitOk) or nil }
++    end
++    return out
++end
++
+ function A.reset()
+     listenerProbes = nil
+     speakerProbes = {}
+diff --git a/cet/VoiceChat/modules/api.lua b/cet/VoiceChat/modules/api.lua
+index 4014d2d..17bb98a 100644
+--- a/cet/VoiceChat/modules/api.lua
++++ b/cet/VoiceChat/modules/api.lua
+@@ -102,6 +102,8 @@ function api.speakers()
+             pos = { x = tonumber(f[2]), y = tonumber(f[3]), z = tonumber(f[4]) },
+             party = f[5] == "1",
+             ear = tonumber(f[6]),
++            -- How Steam Audio hears them (empty: the classic paths below are in use).
++            how = f[7] or "",
+         }
+     end
+     return list
+@@ -116,6 +118,28 @@ function api.setPathAlt(id, from, gain, cutoff)
+     call("VoiceChat_SetPathAlt", id, from.x, from.y, from.z, gain, cutoff)
+ end
+ 
++-- The pretend partner (testing alone): "record", "stop", "place", "remove",
++-- "party on|off", "net <jitter ms> <loss %>", "echo on|off". Returns "" or the error.
++function api.test(cmd)
++    return call("VoiceChat_Test", cmd) or ""
++end
++
++function api.testStatus()
++    local f = split(call("VoiceChat_TestStatus") or "")
++    local t = {
++        status = f[1] or "",
++        party = f[2] == "1",
++        jitter = tonumber(f[3]) or 0,
++        loss = tonumber(f[4]) or 0,
++        echo = f[5] == "1",
++    }
++    if f[8] then
++        t.at = { x = tonumber(f[6]), y = tonumber(f[7]), z = tonumber(f[8]) }
++        t.loud, t.reach = tonumber(f[9]) or 0, tonumber(f[10]) or 0
++    end
++    return t
++end
++
+ -- Our ears above our feet (m).
+ function api.setEar(m)
+     call("VoiceChat_SetEar", m)
+diff --git a/cet/VoiceChat/modules/personal.lua b/cet/VoiceChat/modules/personal.lua
+index 7d339cc..6608baa 100644
+--- a/cet/VoiceChat/modules/personal.lua
++++ b/cet/VoiceChat/modules/personal.lua
+@@ -2,9 +2,10 @@
+ -- world is muted or ducked under them). While one plays, the DLL stops
+ -- reading the place from the game's sound and keeps its last reading.
+ --
+--- The checks are the game's script names (pocket radio IsActive, the
+--- player's IsPhoneCallActive), plus the UI blackboards for the hub menus and
+--- the phone's call state; `checks` remembers which method answered.
++-- The checks are the game's script names found by the discovery (pocket
++-- radio IsActive, the player's IsPhoneCallActive), plus the UI blackboards
++-- for the hub menus and the phone's call state; what works shows in
++-- Environment > diagnostics.
+ 
+ local api = require("modules/api")
+ 
+diff --git a/cet/VoiceChat/modules/ui.lua b/cet/VoiceChat/modules/ui.lua
+index 3157e8c..5f1294e 100644
+--- a/cet/VoiceChat/modules/ui.lua
++++ b/cet/VoiceChat/modules/ui.lua
+@@ -3,6 +3,7 @@
+ local api = require("modules/api")
+ local tr = require("modules/i18n").tr
+ local acoustics = require("modules/acoustics")
++local personal = require("modules/personal")
+ 
+ local U = {}
+ 
+@@ -535,6 +536,9 @@ local function tabPlayers(state)
+     end
+ end
+ 
++local probeResult = nil
++local testError = nil
++
+ local function tabEnvironment(state)
+     local s = state.settings
+     heading(tr("Propagazione della voce", "Voice propagation"))
+@@ -557,6 +561,153 @@ local function tabEnvironment(state)
+     checkbox(tr("Senti il riverbero della tua voce", "Hear the reverb of your own voice"), s, "self_reverb")
+     slider(tr("Quanto", "How much"), s, "self_reverb_level", 0, 1)
+ 
++    heading(tr("Voce di prova (per provare da soli)", "Test voice (for testing alone)"))
++    hint(
++        tr(
++            "Registra fino a 10 s della tua voce (parla normale, poi urla per provare la portata), piazzala dove sei e allontanati: la senti come un altro giocatore fermo lì, con muri, distanza, riverbero e rete simulata.",
++            "Record up to 10 s of your voice (talk normally, then shout to test the range), place it where you stand and walk away: you hear it as another player standing there, with walls, distance, reverb and a simulated network."
++        )
++    )
++    local t = api.testStatus()
++    ImGui.Text(t.status)
++    if t.at then
++        local p = Game.GetPlayer()
++        local me = p and p:GetWorldPosition()
++        if me then
++            local dx, dy, dz = me.x - t.at.x, me.y - t.at.y, me.z - t.at.z
++            ImGui.SameLine()
++            ImGui.Text(string.format(tr("  — a %.0f m", "  — %.0f m away"), math.sqrt(dx * dx + dy * dy + dz * dz)))
++        end
++    end
++    local function button(label, cmd)
++        if ImGui.Button(label) then
++            local err = api.test(cmd)
++            if err ~= "" then
++                testError = err
++            else
++                testError = nil
++            end
++        end
++    end
++    button(tr("Registra", "Record"), "record")
++    ImGui.SameLine()
++    button(tr("Ferma", "Stop"), "stop")
++    ImGui.SameLine()
++    button(tr("Piazzala qui", "Place it here"), "place")
++    ImGui.SameLine()
++    button(tr("Togli", "Remove"), "remove")
++    state.testHud = ImGui.Checkbox(tr("Distanza sullo schermo (anche a menu chiuso)", "Distance on screen (with the menu closed too)"), state.testHud ~= false)
++    local party, changed = ImGui.Checkbox(tr("Nel mio party (radio da lontano)", "In my party (radio from afar)"), t.party)
++    if changed then
++        api.test(party and "party on" or "party off")
++    end
++    ImGui.Text(string.format(tr("Rete: ritardo fino a %.0f ms, %.0f%% persi", "Network: up to %.0f ms late, %.0f%% lost"), t.jitter, t.loss))
++    button(tr("Perfetta", "Perfect"), "net 0 0")
++    ImGui.SameLine()
++    button(tr("NightCoop tipica", "Typical NightCoop"), "net 30 0")
++    ImGui.SameLine()
++    button(tr("Brutta", "Bad"), "net 120 5")
++    ImGui.SameLine()
++    -- Far beyond what NightCoop does: only to hear that the simulation works.
++    button(tr("Pessima (verifica)", "Awful (check)"), "net 400 25")
++    if testError then
++        ImGui.TextColored(1, 0.4, 0.4, 1, testError)
++    end
++    local echo, echoChanged = ImGui.Checkbox(tr("Eco tramite NightCoop (la tua voce torna indietro)", "Echo through NightCoop (your voice comes back)"), t.echo)
++    if echoChanged then
++        api.test(echo and "echo on" or "echo off")
++    end
++    hint(
++        tr(
++            "In una sessione NightCoop (anche da soli come host): quello che dici fa tutto il giro della voce di un altro giocatore, tranne la rete di NightCoop, e torna da dove hai parlato la prima volta. Con un party, arriva come dal tuo party.",
++            "In a NightCoop session (hosting alone is fine): what you say goes the whole way another player's voice does, except NightCoop's network, and comes back from where you first spoke. In a party, it comes as from your party."
++        )
++    )
++
++    heading(tr("Diagnostica", "Diagnostics"))
++    local e = acoustics.env
++    if e then
++        ImGui.Text(
++            string.format(
++                tr(
++                    "Ambiente: riverbero %.2f, dimensione %.2f, pareti %.0f%%, cielo aperto %.0f%%, arredi %.0f%%",
++                    "Surroundings: reverb %.2f, size %.2f, walls %.0f%%, open sky %.0f%%, furniture %.0f%%"
++                ),
++                e.wet,
++                e.size,
++                e.enclosure * 100,
++                e.sky * 100,
++                (e.clutter or 0) * 100
++            )
++        )
++    end
++    local st = state.status or {}
++    local kinds = {
++        quiet = tr("silenzio", "quiet"),
++        music = tr("musica", "music"),
++        crowd = tr("folla", "crowd"),
++        traffic = tr("traffico", "traffic"),
++        rain = tr("pioggia/vento", "rain/wind"),
++        impacts = tr("colpi", "impacts"),
++        mixed = tr("misto", "mixed"),
++    }
++    ImGui.Text(string.format(tr("Suono del gioco: %s", "Game sound: %s"), st.game_sound or "?"))
++    ImGui.Text(string.format(tr("Riverbero usato qui: %s (0 = nessuno)", "Reverb used here: %s (0 = none)"), st.wet_used or "?"))
++    ImGui.TextWrapped(tr("Acustica: ", "Acoustics: ") .. (st.acoustics_stats or "?"))
++    if (st.noise_db or "") == "" then
++        ImGui.Text(tr("Ascolto del gioco: niente ancora (il motivo è nel log)", "Listening to the game: nothing yet (the log says why)"))
++    else
++        ImGui.Text(
++            string.format(
++                tr("Ascolto del gioco: rumore %s dBFS (banda voce), %s", "Listening to the game: noise %s dBFS (voice band), %s"),
++                st.noise_db,
++                kinds[st.scene_kind] or st.scene_kind or "?"
++            )
++        )
++    end
++    if (st.personal or "") ~= "" then
++        local why = { radio = tr("radio personale", "pocket radio"), call = tr("chiamata", "call"), menu = tr("menu", "menu") }
++        ImGui.Text(string.format(tr("In pausa: suoni solo tuoi (%s)", "Paused: sounds only you hear (%s)"), why[st.personal] or st.personal))
++    end
++    local checks = {}
++    for k, v in pairs(personal.checks) do
++        checks[#checks + 1] = k .. "=" .. (v ~= "" and v or "?")
++    end
++    table.sort(checks)
++    ImGui.Text(tr("Controlli suoni personali: ", "Personal sound checks: ") .. table.concat(checks, ", "))
++    local earFrom = {
++        camera = tr("dalla visuale", "from the view"),
++        crouch = tr("accovacciato, stimata", "crouching, estimated"),
++        stand = tr("in piedi, stimata", "standing, estimated"),
++    }
++    ImGui.Text(string.format(tr("Le tue orecchie: %.2f m da terra (%s)", "Your ears: %.2f m above the ground (%s)"),
++        acoustics.ear, earFrom[acoustics.earFrom] or "?"))
++    ImGui.Text(string.format(tr("La tua voce: +%s dB sul solito", "Your voice: +%s dB over usual"), st.loud_db or "0"))
++    if ImGui.Button(tr("Cosa ho davanti? (gruppi di collisione)", "What's in front of me? (collision groups)")) then
++        local ok, res = pcall(acoustics.probeGroups)
++        probeResult = ok and res or { { name = tostring(res) } }
++        for _, g in ipairs(probeResult) do
++            api.log(string.format("probe %s: %s", g.name, g.err or (g.dist and string.format("%.2f m", g.dist) or "-")))
++        end
++    end
++    hint(
++        tr(
++            "Guarda una vetrina, un tavolo o un muro e premi: nel log e qui sotto vedi quali gruppi lo colpiscono.",
++            "Look at a shop window, a table or a wall and press: the log and the list below show which groups hit it."
++        )
++    )
++    for _, g in ipairs(probeResult or {}) do
++        ImGui.Text(string.format("  %s: %s", g.name, g.err or (g.dist and string.format("%.2f m", g.dist) or "-")))
++    end
++    for id, kind in pairs(acoustics.debug) do
++        local name = "#" .. tostring(id)
++        for _, p in ipairs(state.players) do
++            if p.id == id then
++                name = p.name
++            end
++        end
++        ImGui.Text(name .. ": " .. kind)
++    end
+     if acoustics.error then
+         ImGui.TextColored(1, 0.4, 0.4, 1, tr("Errore: ", "Error: ") .. acoustics.error)
+     end
+@@ -636,6 +787,35 @@ local function theme()
+     return pushed
+ end
+ 
++-- With the overlay closed: how far the test voice is, and how the sound gets here.
++function U.drawTestHud(state)
++    local t = state.test
++    if not (t and t.at) or state.testHud == false then
++        return
++    end
++    local p = Game.GetPlayer()
++    local me = p and p:GetWorldPosition()
++    if not me then
++        return
++    end
++    local dx, dy, dz = me.x - t.at.x, me.y - t.at.y, me.z - t.at.z
++    local flags = ImGuiWindowFlags.NoTitleBar + ImGuiWindowFlags.AlwaysAutoResize + ImGuiWindowFlags.NoInputs + ImGuiWindowFlags.NoSavedSettings
++    ImGui.SetNextWindowPos(20, 260, ImGuiCond.FirstUseEver)
++    if ImGui.Begin("##voicechat_test", flags) then
++        ImGui.Text(string.format(tr("Voce di prova: %.1f m", "Test voice: %.1f m"), math.sqrt(dx * dx + dy * dy + dz * dz)))
++        ImGui.Text(string.format(tr("Arriva fino a %.0f m (ora +%d dB sul solito)", "Carries up to %.0f m (now +%d dB over usual)"), t.reach or 0, t.loud or 0))
++        local kind = acoustics.debug[65534]
++        if kind then
++            ImGui.Text(kind)
++        end
++        if acoustics.line then
++            ImGui.Text(tr("In linea retta: ", "On the straight line: ") .. acoustics.line)
++        end
++        ImGui.Text(string.format(tr("Rete: %.0f ms, %.0f%% persi", "Network: %.0f ms, %.0f%% lost"), t.jitter, t.loss))
++    end
++    ImGui.End()
++end
++
+ function U.draw(state, hud)
+     local pushed = theme()
+     ImGui.SetNextWindowSize(560, 620, ImGuiCond.FirstUseEver)
+diff --git a/cet/tests/acoustics_test.lua b/cet/tests/acoustics_test.lua
+index ffddeba..6efbba7 100644
+--- a/cet/tests/acoustics_test.lua
++++ b/cet/tests/acoustics_test.lua
+@@ -121,7 +121,8 @@ local function run(name, setup, check)
+         (ok and "ok   " or "FAIL ")
+             .. name
+             .. "  -> "
+-            .. string.format("gain %.2f cutoff %.0f", p and p.gain or -1, p and p.cutoff or -1)
++            .. (acoustics.debug[1] or "?")
++            .. string.format("  gain %.2f cutoff %.0f", p and p.gain or -1, p and p.cutoff or -1)
+             .. (msg and ("  " .. msg) or "")
+     )
+     if acoustics.error then
+@@ -386,7 +387,7 @@ for _ = 1, 20 do
+     acoustics.update(0.3, settings)
+ end
+ local furnished = surroundings.wet
+-print(string.format("     furnished hall %.2f", furnished))
++print(string.format("     furnished hall %.2f (clutter %.2f)", furnished, acoustics.env.clutter))
+ -- Car park: 60x60 m, ceiling 3 m up, concrete pillars every 8 m.
+ walls = {
+     box(-31, -31, -1, 31, -30, 4),
+@@ -466,15 +467,15 @@ print((okEar and "ok  " or "FAIL") .. string.format(" ears: none %.2f (%s), crou
+ all = all and okEar
+ camAt = nil
+ 
+--- Voices Steam Audio handles in the DLL: a classic path too (the fallback).
++-- Voices Steam Audio handles in the DLL: a classic path too (the fallback), both lines shown.
+ walls, paths, speakers, alts = {}, {}, {}, {}
+ acoustics.reset()
+ speakers = { { id = 1, pos = { x = 6, y = 0, z = 0 }, party = false, how = "in sight 100%" } }
+ for _ = 1, 3 do
+     acoustics.update(0.3, settings)
+ end
+-local okSteam = paths[1] ~= nil and paths[1].gain > 0.9
+-print((okSteam and "ok  " or "FAIL") .. " Steam Audio voices: classic path too")
++local okSteam = paths[1] ~= nil and (acoustics.debug[1] or ""):find("^Steam Audio: in sight 100%%; classic: ") ~= nil
++print((okSteam and "ok  " or "FAIL") .. " Steam Audio voices: classic path too (" .. tostring(acoustics.debug[1]) .. ")")
+ all = all and okSteam
+ 
+ print(all and "ALL OK" or "SOME FAILED")
+diff --git a/crates/coop/src/chat.rs b/crates/coop/src/chat.rs
+index 86c0037..995ab80 100644
+--- a/crates/coop/src/chat.rs
++++ b/crates/coop/src/chat.rs
+@@ -132,8 +132,15 @@ pub trait Game {
+     fn heard(&mut self, h: Heard);
+     /// Called on changes and once a second.
+     fn status(&mut self, s: &Status);
++    /// Testing alone: our own messages come back as [`ECHO_PEER`], from where we first spoke.
++    fn echo(&self) -> bool {
++        false
++    }
+ }
+ 
++/// Who our echo is heard as (the relay's echo id).
++pub const ECHO_PEER: Peer = vc_protocol::ECHO_ID as Peer;
++
+ #[derive(Default)]
+ struct Partner {
+     party: String,
+@@ -159,6 +166,8 @@ pub struct Chat<G: Game> {
+     status: Status,
+     dirty: bool,
+     refresh_s: f32,
++    /// Where the echo stands: where we spoke first since it was turned on.
++    echo_at: Option<Option<Vec3>>,
+ }
+ 
+ fn distance(a: Vec3, b: Vec3) -> f32 {
+@@ -187,6 +196,7 @@ impl<G: Game> Chat<G> {
+             status: Status::default(),
+             dirty: true,
+             refresh_s: 0.0,
++            echo_at: None,
+         }
+     }
+ 
+@@ -308,12 +318,20 @@ impl<G: Game> Chat<G> {
+                 to.push(p);
+             }
+         }
+-        if to.is_empty() {
++        let echo = self.game.echo();
++        if to.is_empty() && !echo {
+             self.queue.clear();
+             return;
+         }
+         let Some(pkt) = self.packet(&key, me, now_ms) else { return };
+-        let results: Vec<i32> = if to.len() == all || to.len() >= TO_ALL_FROM {
++        if echo {
++            // The whole way back but NightCoop's network: sealed, parsed, checked like a partner's.
++            let at = *self.echo_at.get_or_insert(here);
++            self.voice(coop, me, &pkt, Some(at));
++        }
++        let results: Vec<i32> = if to.is_empty() {
++            Vec::new()
++        } else if to.len() == all || to.len() >= TO_ALL_FROM {
+             vec![coop.send(TO_ALL, VOICE, &pkt, 0)]
+         } else {
+             to.iter().map(|&p| coop.send(p, VOICE, &pkt, 0)).collect()
+@@ -338,7 +356,8 @@ impl<G: Game> Chat<G> {
+         self.queue.clear();
+     }
+ 
+-    fn voice(&mut self, coop: &dyn Coop, from: Peer, data: &[u8]) {
++    /// `echo`: our own message coming back, heard from there (see [`Game::echo`]).
++    fn voice(&mut self, coop: &dyn Coop, from: Peer, data: &[u8], echo: Option<Option<Vec3>>) {
+         let Some(key) = &self.key else { return };
+         let (Some(&WIRE), Some(seq), Ok(from16)) = (data.first(), data.get(1..5), u16::try_from(from)) else {
+             self.status.metrics.refused += 1;
+@@ -393,8 +412,10 @@ impl<G: Game> Chat<G> {
+             }
+         }
+         let mine = self.game.party();
+-        let party = self.same_party(&mine, from);
+-        let pos = self.body_of(coop, from);
++        // The echo is in our party whenever we are in one: so the radio can be tried alone.
++        let party = if echo.is_some() { !mine.is_empty() } else { self.same_party(&mine, from) };
++        let pos = echo.unwrap_or_else(|| self.body_of(coop, from));
++        let from = if echo.is_some() { ECHO_PEER } else { from };
+         if let (Some(a), Some(b)) = (self.game.me(), pos)
+             && !party
+             && distance(a, b) > RANGE * vc_protocol::FADE_TAIL * env.reach() + RANGE_SLACK
+@@ -503,6 +524,9 @@ impl<G: Game> Hooks for Chat<G> {
+             self.game.heard(h);
+         }
+         self.game.take_frames(&mut self.queue);
++        if !self.game.echo() {
++            self.echo_at = None;
++        }
+         if !w.in_session {
+             self.queue.clear();
+             self.publish(coop, dt);
+@@ -542,7 +566,7 @@ impl<G: Game> Hooks for Chat<G> {
+ 
+     fn message(&mut self, coop: &dyn Coop, from: Peer, channel: u16, data: &[u8]) {
+         match (channel, data.split_first()) {
+-            (VOICE, _) => self.voice(coop, from, data),
++            (VOICE, _) => self.voice(coop, from, data, None),
+             (PARTY, Some((&WIRE, name))) => {
+                 let name = coop.clean_text(name, PARTY_MAX);
+                 self.partners.entry(from).or_default().party = name;
+@@ -603,6 +627,7 @@ mod tests {
+         /// (when, frame)
+         heard: Vec<(f64, Heard)>,
+         status: Status,
++        echo: bool,
+     }
+ 
+     impl Game for TestGame {
+@@ -632,6 +657,9 @@ mod tests {
+         fn status(&mut self, s: &Status) {
+             self.status = s.clone();
+         }
++        fn echo(&self) -> bool {
++            self.echo
++        }
+     }
+ 
+     struct Session {
+@@ -656,6 +684,7 @@ mod tests {
+                     loud: 0,
+                     heard: Vec::new(),
+                     status: Status::default(),
++                    echo: false,
+                 };
+                 f.add(Some(PROTOCOL), Some(Chat::new(g)));
+                 talk.push(t);
+@@ -766,6 +795,33 @@ mod tests {
+         assert!(s.heard_from(1, 0).iter().all(|(_, h)| !h.party));
+     }
+ 
++    #[test]
++    fn alone_the_echo_comes_back_from_where_we_first_spoke() {
++        let mut s = Session::new(1, quiet());
++        s.w.borrow_mut().pos.insert(0, [0.0; 3]);
++        s.game(0).echo = true;
++        s.talk[0].set(true);
++        s.run(1000.0);
++        let got = s.heard_from(0, ECHO_PEER);
++        assert!(got.len() >= 45, "{}", got.len());
++        assert!(got.iter().all(|(_, h)| h.pos == Some([0.0; 3]) && !h.party && h.env.ear == 104));
++        assert!(got.windows(2).all(|w| w[1].1.seq == w[0].1.seq + 1));
++        // It stays where it started; far beyond its range it's gone; in a party it comes as the radio.
++        s.w.borrow_mut().pos.insert(0, [200.0, 0.0, 0.0]);
++        s.run(500.0);
++        let n = s.heard_from(0, ECHO_PEER).len();
++        s.run(500.0);
++        assert_eq!(s.heard_from(0, ECHO_PEER).len(), n, "out of range");
++        s.w.borrow_mut().party.insert(0, "x".into());
++        s.run(500.0);
++        assert!(s.heard_from(0, ECHO_PEER).last().is_some_and(|(_, h)| h.party && h.pos == Some([0.0; 3])));
++        s.game(0).echo = false;
++        s.run(100.0);
++        let n = s.heard_from(0, ECHO_PEER).len();
++        s.run(500.0);
++        assert_eq!(s.heard_from(0, ECHO_PEER).len(), n, "off");
++    }
++
+     #[test]
+     fn a_shout_carries_further() {
+         let mut s = Session::new(2, quiet());
+diff --git a/crates/plugin/src/api.rs b/crates/plugin/src/api.rs
+index d00fbf9..d8b84b9 100644
+--- a/crates/plugin/src/api.rs
++++ b/crates/plugin/src/api.rs
+@@ -28,6 +28,8 @@ pub fn exports() -> impl Exportable {
+         GlobalExport(global!(c"VoiceChat_SetSurroundings", set_surroundings)),
+         GlobalExport(global!(c"VoiceChat_SetPersonal", set_personal)),
+         GlobalExport(global!(c"VoiceChat_SetEar", set_ear)),
++        GlobalExport(global!(c"VoiceChat_Test", test)),
++        GlobalExport(global!(c"VoiceChat_TestStatus", test_status)),
+         GlobalExport(global!(c"VoiceChat_CaptureKey", capture_key)),
+         GlobalExport(global!(c"VoiceChat_CapturedKey", captured_key)),
+         GlobalExport(global!(c"VoiceChat_KeyName", key_name)),
+@@ -78,6 +80,7 @@ fn status() -> Vec<String> {
+             }
+         };
+         drop(coop);
++        let meters = *s.lock(&s.meters);
+         vec![
+             format!("mode={}", info.mode),
+             format!("mode_detail={}", info.detail),
+@@ -95,6 +98,14 @@ fn status() -> Vec<String> {
+             format!("room={}", set.room),
+             format!("server={}", set.server),
+             format!("in_game={}", s.lock(&s.pose).is_some() as u8),
++            format!("noise_db={}", meters.scene.map_or(String::new(), |r| format!("{:.0}", r.noise_db))),
++            format!("scene_kind={}", meters.scene.map_or("", |r| r.kind.code())),
++            format!("personal={}", s.personal().unwrap_or_default()),
++            format!("game_sound={}", crate::gamemix::state()),
++            format!("loud_db={:.0}", meters.loud_db),
++            format!("wet_used={:.2}", meters.wet),
++            format!("acoustics={}", if crate::sound3d::active(s).is_some() { "steam" } else { "classic" }),
++            format!("acoustics_stats={}", crate::sound3d::stats(s)),
+         ]
+     })
+ }
+@@ -196,8 +207,10 @@ fn players() -> Vec<String> {
+ 
+ /// Speakers heard in the last 10 s (their paths stay ready through pauses), for the acoustics:
+ /// `id \t x \t y \t z \t party \t ears above the feet (m)`.
++/// `id \t x \t y \t z \t party \t ear m \t how Steam Audio hears it (empty: classic)`.
+ fn speakers() -> Vec<String> {
+     with(|s| {
++        let how = s.lock(&s.how).clone();
+         s.lock(&s.speakers)
+             .iter()
+             .filter(|(_, i)| i.last_packet.elapsed() < Duration::from_secs(10))
+@@ -205,7 +218,8 @@ fn speakers() -> Vec<String> {
+                 // Only people in the world have a place for sound to travel from.
+                 let p = i.pos?;
+                 let ear = i.env.ear_m().unwrap_or(vc_dsp::spatial::EAR_HEIGHT);
+-                Some(format!("{id}\t{}\t{}\t{}\t{}\t{ear}", p[0], p[1], p[2], i.party as u8))
++                let h = how.get(id).map_or("", String::as_str);
++                Some(format!("{id}\t{}\t{}\t{}\t{}\t{ear}\t{h}", p[0], p[1], p[2], i.party as u8))
+             })
+             .collect()
+     })
+@@ -254,6 +268,47 @@ fn set_personal(reason: String) {
+     with(|s| s.set_personal(reason.chars().take(32).collect()));
+ }
+ 
++/// The pretend partner: "record", "stop", "place" (here, with the surroundings here),
++/// "remove", "party on|off", "net <jitter ms> <loss %>", "echo on|off" (our voice back through NightCoop).
++fn test(cmd: String) -> String {
++    with(|s| {
++        let pose = s.lock(&s.pose).map(|p| p.pos());
++        // It stands as we do now: same ear height.
++        let env = vc_protocol::Env {
++            ear: vc_protocol::Env::ear_cm(s.ear()),
++            ..s.surroundings().map_or(vc_protocol::Env::default(), |e| e.to_env())
++        };
++        let mut c = s.lock(&s.test);
++        let mut words = cmd.split_whitespace();
++        match (words.next(), words.next(), words.next()) {
++            (Some("record"), ..) => c.record = true,
++            (Some("stop"), ..) => c.stop_record = true,
++            (Some("place"), ..) => match pose {
++                Some(p) => c.at = Some((p, env)),
++                None => return crate::tr!("non sei nel mondo di gioco", "you're not in the game world"),
++            },
++            (Some("remove"), ..) => c.at = None,
++            (Some("party"), Some(v), _) => c.party = v == "on",
++            (Some("echo"), Some(v), _) => c.coop_echo = v == "on",
++            (Some("net"), Some(j), Some(l)) => {
++                c.jitter_ms = j.parse::<f32>().unwrap_or(30.0).clamp(0.0, 500.0);
++                c.loss_pct = l.parse::<f32>().unwrap_or(0.0).clamp(0.0, 100.0);
++            }
++            _ => return format!("? {cmd}"),
++        }
++        String::new()
++    })
++}
++
++/// `status \t party \t jitter ms \t loss % \t NightCoop echo \t x \t y \t z \t loud dB \t reach m` (no position: not placed).
++fn test_status() -> String {
++    with(|s| {
++        let c = s.lock(&s.test);
++        let at = c.at.map_or(String::new(), |(p, _)| format!("\t{}\t{}\t{}\t{}\t{:.0}", p[0], p[1], p[2], c.reach.0, c.reach.1));
++        format!("{}\t{}\t{}\t{}\t{}{}", c.status, c.party as u8, c.jitter_ms, c.loss_pct, c.coop_echo as u8, at)
++    })
++}
++
+ fn capture_key() {
+     keys::start_capture();
+ }
+diff --git a/crates/plugin/src/audio.rs b/crates/plugin/src/audio.rs
+index 9e9e362..45401b8 100644
+--- a/crates/plugin/src/audio.rs
++++ b/crates/plugin/src/audio.rs
+@@ -30,7 +30,8 @@ use crate::config::{Mode, Noise};
+ use crate::keys;
+ use crate::log_info;
+ use crate::net::ChannelSlot;
+-use crate::state::{Meters, Shared, Surroundings};
++use crate::state::{Meters, Shared, SpeakerInfo, Surroundings};
++use crate::testvoice::{TEST_ID, TestVoice};
+ 
+ /// Mixed audio kept queued for the output device.
+ const OUTPUT_DEPTH_MS: u32 = 60;
+@@ -492,6 +493,9 @@ impl Engine {
+         let mut voices: HashMap<PlayerId, Voice> = HashMap::new();
+         let mut decoder: Option<vc_acoustics::render::Decoder> = None;
+         let silence = [0.0f32; FRAME];
++        let mut how_at = Instant::now();
++        // The test voice's acoustics into the log too, every 2 s (see `show_how`).
++        let mut how_logged = Instant::now();
+ 
+         let out_depth = (self.out_rate * OUTPUT_DEPTH_MS / 1000) as usize * 2;
+         let mut raw = vec![0.0f32; self.in_rate as usize / 10];
+@@ -510,12 +514,15 @@ impl Engine {
+         let mut seq = 0u32;
+         let mut transmitting = false;
+         let mut shout = spatial::Shout::default();
++        let mut loud_db = 0.0f32;
+         let mut scene: Option<(u32, Scene)> = None;
+         let mut game_pcm = Vec::<f32>::new();
+         let mut window_at = Instant::now();
+         let mut reading: Option<scene::Reading> = None;
+         let mut personal_since: Option<Instant> = None;
+         let mut noise_heard = Smooth::new(0.0, NOISE_FRAMES);
++        let mut test = TestVoice::default();
++        let mut arrivals = Vec::new();
+ 
+         log_info(format_args!("audio: ready"));
+         while !shared.stop.load(Ordering::Relaxed) {
+@@ -570,7 +577,7 @@ impl Engine {
+             to_48k.process(&raw[..n], &mut pcm);
+             let whole = pcm.len() / HALF * HALF;
+             let input_gain = db_to_gain(s.input_gain_db);
+-            let mut meters = Meters::default();
++            let mut meters = Meters { scene: reading, loud_db, wet: listener_wet, ..Meters::default() };
+             for half in pcm[..whole].chunks_exact_mut(HALF) {
+                 for x in half.iter_mut() {
+                     *x *= input_gain;
+@@ -600,6 +607,7 @@ impl Engine {
+                 for x in half.iter_mut() {
+                     *x *= s.mic_volume;
+                 }
++                test.record(half);
+                 if s.monitor && !s.deafened {
+                     // Speakers instead of headphones: the mic hears itself and howls.
+                     hot_halves = if meters.processed_db > HOWL_DB { hot_halves + 1 } else { 0 };
+@@ -628,7 +636,8 @@ impl Engine {
+                 }
+                 tx_frame.extend_from_slice(half);
+                 if tx_frame.len() == FRAME {
+-                    let loud_db = shout.push(rms_db(&tx_frame));
++                    loud_db = shout.push(rms_db(&tx_frame));
++                    meters.loud_db = loud_db;
+                     mic_clip.apply(&mut tx_frame);
+                     let len = encoder.encode_float(&tx_frame, &mut packet).map_err(|e| e.to_string())?;
+                     tx_frame.clear();
+@@ -652,6 +661,9 @@ impl Engine {
+                     seq = seq.wrapping_add(1);
+                 }
+             }
++            if !transmitting {
++                loud_db = 0.0;
++            }
+             pcm.drain(..whole);
+             if whole > 0 {
+                 *shared.lock(&shared.meters) = meters;
+@@ -672,6 +684,41 @@ impl Engine {
+                 }
+                 voices.get_mut(&from).unwrap().jitter.push(seq, opus);
+             }
++            // The pretend partner, if placed (see testvoice).
++            let ctl = {
++                let mut c = shared.lock(&shared.test);
++                c.status = test.control(&mut c);
++                c.clone()
++            };
++            arrivals.clear();
++            test.arrivals(&ctl, Instant::now(), &mut arrivals);
++            if let (Some((at, env)), false) = (ctl.at, arrivals.is_empty()) {
++                let loud = arrivals.iter().map(|a| a.2).max().unwrap_or(0);
++                let info = SpeakerInfo {
++                    pos: Some(at),
++                    party: ctl.party,
++                    env: Env { loud, ..env },
++                    last_packet: Instant::now(),
++                    level_db: -100.0,
++                    audible_until: None,
++                };
++                let mut sp = shared.lock(&shared.speakers);
++                let e = sp.entry(TEST_ID).or_insert(info);
++                (e.pos, e.party, e.env, e.last_packet) = (Some(at), ctl.party, Env { loud, ..env }, Instant::now());
++                drop(sp);
++                if !voices.contains_key(&TEST_ID)
++                    && let Some(v) = Voice::new()
++                {
++                    voices.insert(TEST_ID, v);
++                }
++                if let Some(v) = voices.get_mut(&TEST_ID) {
++                    for (seq, opus, _) in arrivals.drain(..) {
++                        v.jitter.push(seq, opus);
++                    }
++                }
++            } else if ctl.at.is_none() {
++                shared.lock(&shared.speakers).remove(&TEST_ID);
++            }
+             voices.retain(|id, _| shared.lock(&shared.speakers).contains_key(id));
+ 
+             // --- playback, 20 ms at a time ---
+@@ -689,6 +736,14 @@ impl Engine {
+                 {
+                     decoder = vc_acoustics::render::Decoder::new(&s3d.engine).map_err(|e| log_info(format_args!("acoustics: {e}"))).ok();
+                 }
++                let show_how = now.duration_since(how_at) > Duration::from_millis(250);
++                if show_how {
++                    how_at = now;
++                }
++                let log_how = show_how && now.duration_since(how_logged) > Duration::from_secs(2);
++                if log_how {
++                    how_logged = now;
++                }
+                 for (id, v) in voices.iter_mut() {
+                     if v.next(&mut voice).is_none() {
+                         v.far.ring(&mut mix);
+@@ -873,6 +928,9 @@ impl Engine {
+                                 (through * through + r * r + bend2).sqrt()
+                             };
+                             let path = spatial::Path { from, gain: at_ears * guided, cutoff: LowPass::OPEN };
++                            if *id == TEST_ID {
++                                shared.lock(&shared.test).reach = (v.loud.round() as u8, range * reach * (1.0 + carry) * spatial::FADE_TAIL);
++                            }
+                             let h = spatial::heard(listener, p.forward_vec(), path, party, range * reach, carry, v.radio);
+                             v.radio = h.radio;
+                             let volume = if s.deafened || pref.muted { 0.0 } else { pref.volume };
+@@ -910,6 +968,44 @@ impl Engine {
+                             }
+                             v.far.reverb.set_room(f32::from(env.size) / 255.0, f32::from(env.damp) / 255.0);
+                             v.far.ring(&mut mix);
++                            if show_how {
++                                let db = |x: f32| if x > 1e-6 { format!("{:.0} dB", 20.0 * x.log10()) } else { crate::tr!("muta", "silent") };
++                                let line = crate::tr!(
++                                    "in vista {:.0}%, attraverso {}, diretta {}, rimbalzi {}, in tutto {}{}",
++                                    "in sight {:.0}%, through {}, direct {}, rebounds {}, total {}{}",
++                                    d.occlusion * 100.0,
++                                    db(through),
++                                    db(spread * through),
++                                    if sa.has_rebounds {
++                                        db(rebound_gain * sa.rebound_level() * vc_acoustics::render::EAR)
++                                    } else {
++                                        crate::tr!("non calcolati", "not worked out")
++                                    },
++                                    db(h.gain),
++                                    if h.radio {
++                                        crate::tr!(" (radio)", " (radio)")
++                                    } else {
++                                        bends
++                                            .iter()
++                                            .flatten()
++                                            .filter(|b| b.1 > 0.0)
++                                            .map(|b| format!("{}{}", crate::tr!(", dall'apertura ", ", round the opening "), db(b.1 * spread)))
++                                            .collect()
++                                    }
++                                );
++                                if log_how && *id == TEST_ID {
++                                    log_info(format_args!(
++                                        "acoustics: test voice at {dist:.1} m: {line}; ring {ring:.2}, guided {} (carry {carry:.2}, wet here {:.2} there {:.2}, size here {:.2} there {:.2}), rebounds raw {}",
++                                        db(guided),
++                                        wet_here * 2.0,
++                                        wet_there * 2.0,
++                                        surroundings.map_or(0.0, |e| e.size),
++                                        f32::from(env.size) / 255.0,
++                                        db(raw * vc_acoustics::render::EAR)
++                                    ));
++                                }
++                                shared.lock(&shared.how).insert(*id, line);
++                            }
+                             continue;
+                         }
+                         (Some(p), Some(pos)) => {
+@@ -918,6 +1014,9 @@ impl Engine {
+                             let swap = matches!((alt, v.ways[0].from), (Some(a), Some(f))
+                                 if spatial::distance(a.from, f) < spatial::distance(main.from, f));
+                             let slots = if swap { [alt, Some(main)] } else { [Some(main), alt] };
++                            if *id == TEST_ID {
++                                shared.lock(&shared.test).reach = (v.loud.round() as u8, range * reach * (1.0 + carry) * spatial::FADE_TAIL);
++                            }
+                             let listener = spatial::ear(p.pos(), my_ear);
+                             for (k, path) in slots.into_iter().enumerate() {
+                                 let Some(mut path) = path else { continue };
+@@ -952,6 +1051,9 @@ impl Engine {
+                 if let (Some(s3d), Some(dec), Some(space)) = (s3d, decoder.as_mut(), space.as_ref()) {
+                     dec.decode(&s3d.engine, space, &mut mix);
+                 }
++                if s3d.is_none() {
++                    shared.lock(&shared.how).clear();
++                }
+                 // Echo canceller reference: only the other players. Our own
+                 // voice (monitor, our reverb) must not be in it, or the
+                 // canceller fights the microphone: it eats sibilants and the
+diff --git a/crates/plugin/src/coop.rs b/crates/plugin/src/coop.rs
+index 037cebd..8f14993 100644
+--- a/crates/plugin/src/coop.rs
++++ b/crates/plugin/src/coop.rs
+@@ -188,6 +188,10 @@ impl Game for Glue {
+         s.lock(&s.inbox).push((from, h.seq, h.opus, h.reset));
+     }
+ 
++    fn echo(&self) -> bool {
++        self.shared.lock(&self.shared.test).coop_echo
++    }
++
+     fn status(&mut self, st: &Status) {
+         self.check_ptt();
+         let s = &self.shared;
+@@ -209,7 +213,7 @@ impl Game for Glue {
+             .iter()
+             .filter_map(|m| Some(RosterEntry { id: u16::try_from(m.peer).ok()?, name: m.name.clone(), party: m.party.clone() }))
+             .collect();
+-        s.lock(&s.speakers).retain(|id, _| roster.iter().any(|p| p.id == *id));
++        s.lock(&s.speakers).retain(|id, _| *id == crate::testvoice::TEST_ID || *id == vc_protocol::ECHO_ID || roster.iter().any(|p| p.id == *id));
+         *s.lock(&s.roster) = roster;
+         let link = match u16::try_from(st.me) {
+             Ok(id) if st.ready && st.in_session => Link::Joined { id, range: chat::RANGE },
+diff --git a/crates/plugin/src/gamemix.rs b/crates/plugin/src/gamemix.rs
+index 659df96..5ed8d9f 100644
+--- a/crates/plugin/src/gamemix.rs
++++ b/crates/plugin/src/gamemix.rs
+@@ -120,6 +120,15 @@ pub fn drain(out: &mut Vec<f32>) -> Option<u32> {
+     (rate != 0).then_some(rate)
+ }
+ 
++/// For the diagnostics: "off", "waiting" (hooked, the game's stream not seen), or its rate.
++pub fn state() -> String {
++    match (lock(&PATCHED).is_empty(), MAIN_RATE.load(Ordering::Acquire)) {
++        (true, _) => "off".into(),
++        (false, 0) => "waiting".into(),
++        (false, r) => format!("{r} Hz"),
++    }
++}
++
+ /// Format from a WAVEFORMATEX(TENSIBLE), when we can read its samples.
+ unsafe fn parse(fmt: *const u8) -> Option<Format> {
+     if fmt.is_null() {
+diff --git a/crates/plugin/src/lib.rs b/crates/plugin/src/lib.rs
+index bbb0ae3..d2c5211 100644
+--- a/crates/plugin/src/lib.rs
++++ b/crates/plugin/src/lib.rs
+@@ -15,6 +15,7 @@ mod rays;
+ mod session;
+ mod sound3d;
+ mod state;
++mod testvoice;
+ 
+ use std::cell::{Cell, RefCell};
+ use std::fmt;
+diff --git a/crates/plugin/src/net.rs b/crates/plugin/src/net.rs
+index a38eed6..26042d9 100644
+--- a/crates/plugin/src/net.rs
++++ b/crates/plugin/src/net.rs
+@@ -353,7 +353,9 @@ impl Client {
+                     })
+                     .collect();
+                 log_info(format_args!("net: room: {}", list.join(", ")));
+-                shared.lock(&shared.speakers).retain(|id, _| players.iter().any(|p| p.id == *id));
++                shared.lock(&shared.speakers).retain(|id, _| {
++                    *id == vc_protocol::ECHO_ID || *id == crate::testvoice::TEST_ID || players.iter().any(|p| p.id == *id)
++                });
+                 *shared.lock(&shared.roster) = players;
+             }
+         }
+diff --git a/crates/plugin/src/rays.rs b/crates/plugin/src/rays.rs
+index 19d8323..8603330 100644
+--- a/crates/plugin/src/rays.rs
++++ b/crates/plugin/src/rays.rs
+@@ -255,6 +255,31 @@ impl Service {
+         }
+     }
+ 
++    /// For the log: six rays from `ear` (down, up, four around, 20 m),
++    /// the game's raw answers, to check what its results hold.
++    pub fn probe(&self, ear: [f32; 3]) -> String {
++        let Some(sys) = system() else { return "no spatial queries system".into() };
++        let dirs = [[0.0, 0.0, -1.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, -1.0, 0.0]];
++        let from = Vector4 { x: ear[0], y: ear[1], z: ear[2], w: 1.0 };
++        let mut out = Vec::new();
++        for d in dirs {
++            let to = Vector4 { x: ear[0] + d[0] * 20.0, y: ear[1] + d[1] * 20.0, z: ear[2] + d[2] * 20.0, w: 1.0 };
++            for g in GROUPS {
++                if let Some(h) = raycast(&sys, from, to, CName::new(g)) {
++                    let p = h.position;
++                    let real = ((p[0] - ear[0]).powi(2) + (p[1] - ear[1]).powi(2) + (p[2] - ear[2]).powi(2)).sqrt();
++                    out.push(format!(
++                        "dir {d:?} {g}: pos {p:?} (at {real:.2} m) normal {:?} distance field {:.3} material {}",
++                        h.normal,
++                        h.distance,
++                        CName::from(h.material).as_str()
++                    ));
++                }
++            }
++        }
++        if out.is_empty() { "nothing hit".into() } else { out.join("\n  ") }
++    }
++
+     /// The ray's nearest hit; through what lets some sound by (a door's
+     /// gaps, a grate's holes) it goes on if its share says so (`pass`), here
+     /// in the same frame: each such pass used to cost Steam Audio another
+diff --git a/crates/plugin/src/sound3d.rs b/crates/plugin/src/sound3d.rs
+index 1b3fa95..8e7305a 100644
+--- a/crates/plugin/src/sound3d.rs
++++ b/crates/plugin/src/sound3d.rs
+@@ -174,6 +174,30 @@ fn rebounds(shared: &Shared) {
+ 
+ thread_local! {
+     static LAST_DIRECT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
++    static PROBED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
++    static LAST_LOG: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
++}
++
++/// How often, while voices are worked out, the log gets what Steam Audio found.
++const LOG_EVERY: Duration = Duration::from_secs(10);
++
++/// Into the log: once (the first voice), the game's raw answers to a few rays; then every
++/// [`LOG_EVERY`] the counters and each voice's line (what reaches us, how).
++fn log_state(shared: &Shared, s3d: &Sound3d, voices: usize) {
++    if !PROBED.get()
++        && voices > 0
++        && let Some(pose) = *shared.lock(&shared.pose)
++    {
++        PROBED.set(true);
++        let probe = s3d.service.probe(spatial::ear(pose.pos(), shared.ear()));
++        crate::log_info(format_args!("acoustics: probe\n  {probe}"));
++    }
++    if voices == 0 || LAST_LOG.get().is_some_and(|t| t.elapsed() < LOG_EVERY) {
++        return;
++    }
++    LAST_LOG.set(Some(Instant::now()));
++    let lines: Vec<String> = shared.lock(&shared.how).iter().map(|(id, l)| format!("{}: {l}", u32::from(*id))).collect();
++    crate::log_info(format_args!("acoustics: {} | {}", stats(shared), lines.join(" | ")));
+ }
+ 
+ /// On the game thread, every frame: answers the rebounds' rays, and every
+@@ -186,6 +210,7 @@ pub fn tick(shared: &Shared) {
+     }
+     LAST_DIRECT.set(Some(Instant::now()));
+     if let Some((listener, voices)) = scene(shared) {
++        log_state(shared, s3d, voices.len());
+         if !voices.is_empty() {
+             s3d.engine.direct(&listener, &voices, &QUALITY);
+         }
+@@ -198,3 +223,44 @@ pub fn close(shared: &Shared) {
+         s3d.service.close();
+     }
+ }
++
++/// For the diagnostics: rays answered, time on the game thread, materials met.
++pub fn stats(shared: &Shared) -> String {
++    let Some(s3d) = shared.sound3d.get() else {
++        return crate::tr!("non disponibile (modello classico)", "unavailable (classic model)");
++    };
++    if active(shared).is_none() {
++        return crate::tr!("spento (modello classico)", "off (classic model)");
++    }
++    let st = s3d.service.stats.lock().unwrap_or_else(|e| e.into_inner()).clone();
++    if st.rays == 0 {
++        return crate::tr!(
++            "Steam Audio pronto, nessuna voce da calcolare (lavora solo quando qualcuno parla: piazzate la voce di prova)",
++            "Steam Audio ready, no voice to work out (it only works while someone talks: place the test voice)"
++        );
++    }
++    let us = if st.rays > 0 { st.busy.as_secs_f64() * 1e6 / st.rays as f64 } else { 0.0 };
++    let last = s3d.last.lock().unwrap_or_else(|e| e.into_inner()).map_or(String::new(), |(at, took)| {
++        crate::tr!(", ultimo calcolo {:.0} ms ({:.1} s fa)", ", last run {:.0} ms ({:.1} s ago)", took.as_secs_f64() * 1e3, at.elapsed().as_secs_f64())
++    });
++    let last = last
++        + &st.longest.map_or(String::new(), |(took, at)| {
++            crate::tr!(
++                ", sul thread di gioco al massimo {:.1} ms di fila ({:.0} s fa)",
++                ", on the game thread at most {:.1} ms at once ({:.0} s ago)",
++                took.as_secs_f64() * 1e3,
++                at.elapsed().as_secs_f64()
++            )
++        });
++    let mats: Vec<String> = st.materials.iter().map(|(n, m)| format!("{} = {m}", n.trim_end_matches(".physmat"))).collect();
++    crate::tr!(
++        "Steam Audio: {} raggi, {:.1} µs l'uno{}, {} lotti abbandonati, {} distanze corrette; materiali: {}",
++        "Steam Audio: {} rays, {:.1} µs each{}, {} batches given up, {} distances fixed; materials: {}",
++        st.rays,
++        us,
++        last,
++        st.given_up,
++        st.distance_off,
++        mats.join(", ")
++    )
++}
+diff --git a/crates/plugin/src/state.rs b/crates/plugin/src/state.rs
+index fd25c2f..001d8a8 100644
+--- a/crates/plugin/src/state.rs
++++ b/crates/plugin/src/state.rs
+@@ -42,11 +42,17 @@ pub struct Meters {
+     pub processed_db: f32,
+     pub gate_open: bool,
+     pub transmitting: bool,
++    /// The place, from the game's own sound; `None`: nothing to go by yet.
++    pub scene: Option<vc_dsp::scene::Reading>,
++    /// How much louder than usual we talk (shouting), dB.
++    pub loud_db: f32,
++    /// The reverb of our place actually used, 0..1.
++    pub wet: f32,
+ }
+ 
+ impl Default for Meters {
+     fn default() -> Self {
+-        Self { input_db: -100.0, processed_db: -100.0, gate_open: false, transmitting: false }
++        Self { input_db: -100.0, processed_db: -100.0, gate_open: false, transmitting: false, scene: None, loud_db: 0.0, wet: 0.0 }
+     }
+ }
+ 
+@@ -126,6 +132,8 @@ pub struct Shared {
+     /// Per speaker: the loudest way in, a second one from another side, and when they came.
+     acoustics: Mutex<HashMap<PlayerId, (Path, Option<Path>, Instant)>>,
+     pub surroundings: Mutex<Option<Surroundings>>,
++    /// The pretend partner for testing alone.
++    pub test: Mutex<crate::testvoice::Control>,
+     /// Why the player hears sounds of their own (pocket radio, call, menu), from the CET mod.
+     personal: Mutex<Option<(String, Instant)>>,
+     /// Our ears above our feet (m), measured by the CET mod.
+@@ -146,6 +154,8 @@ pub struct Shared {
+     pub session: Mutex<SessionInfo>,
+     /// Steam Audio, once started (see `sound3d`).
+     pub sound3d: std::sync::OnceLock<crate::sound3d::Sound3d>,
++    /// How each voice reaches us with Steam Audio, for the diagnostics.
++    pub how: Mutex<HashMap<PlayerId, String>>,
+ }
+ 
+ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+@@ -175,6 +185,7 @@ impl Shared {
+             surroundings: Mutex::new(None),
+             personal: Mutex::new(None),
+             ear: Mutex::new(None),
++            test: Mutex::new(crate::testvoice::Control { jitter_ms: 30.0, ..Default::default() }),
+             meters: Mutex::new(Meters::default()),
+             devices: Mutex::new((Vec::new(), Vec::new())),
+             audio_status: Mutex::new("starting".into()),
+@@ -186,6 +197,7 @@ impl Shared {
+             ptt_clash: Mutex::new(String::new()),
+             session: Mutex::new(SessionInfo::default()),
+             sound3d: std::sync::OnceLock::new(),
++            how: Mutex::new(HashMap::new()),
+         }
+     }
+ 
+@@ -285,6 +297,12 @@ impl Shared {
+     }
+ 
+     pub fn name_of(&self, id: PlayerId) -> Option<String> {
++        if id == vc_protocol::ECHO_ID {
++            return Some(crate::tr!("eco", "echo"));
++        }
++        if id == crate::testvoice::TEST_ID {
++            return Some(crate::tr!("prova", "test"));
++        }
+         lock(&self.roster).iter().find(|p| p.id == id).map(|p| p.name.clone())
+     }
+ }
+diff --git a/crates/plugin/src/testvoice.rs b/crates/plugin/src/testvoice.rs
+new file mode 100644
+index 0000000..a7e1b89
+--- /dev/null
++++ b/crates/plugin/src/testvoice.rs
+@@ -0,0 +1,200 @@
++//! A pretend partner, for testing alone: your own recorded voice, played from
++//! where you left it. It goes through everything a real partner's voice goes
++//! through once it arrives (jitter buffer, decoder, walls and openings,
++//! distance, reverb, shouting, noise), delivered the way NightCoop does: two
++//! frames per message every 40 ms, each message late by a random jitter, some
++//! lost. Only the network between two games is left out (the chat's tests
++//! cover that).
++
++use std::collections::VecDeque;
++use std::time::{Duration, Instant};
++
++use vc_dsp::spatial::Shout;
++use vc_dsp::{FRAME, RATE, rms_db};
++use vc_protocol::{Env, PlayerId, Vec3};
++
++/// Its id among the speakers.
++pub const TEST_ID: PlayerId = PlayerId::MAX - 1;
++const MAX_CLIP: Duration = Duration::from_secs(10);
++const MESSAGE: Duration = Duration::from_millis(40);
++/// Messages of silence between two plays of the clip (1 s).
++const PAUSE_MESSAGES: usize = 25;
++
++/// What the UI asks for; read by the audio thread.
++#[derive(Debug, Clone, Default)]
++pub struct Control {
++    /// Start a recording (taken by the audio thread).
++    pub record: bool,
++    /// Stop the recording early.
++    pub stop_record: bool,
++    /// Where it stands (feet), and the surroundings there when placed; `None`: silent.
++    pub at: Option<(Vec3, Env)>,
++    pub party: bool,
++    /// Our own voice back through the NightCoop chat (see `vc_coop::chat::Game::echo`).
++    pub coop_echo: bool,
++    /// Extra delay of each message, up to this many ms.
++    pub jitter_ms: f32,
++    /// Messages lost, percent.
++    pub loss_pct: f32,
++    /// For the UI.
++    pub status: String,
++    /// For the UI: how much over the usual voice it plays now (dB), and how far it carries here (m).
++    pub reach: (u8, f32),
++}
++
++/// A frame as it arrives: (seq, opus, loud dB).
++pub type Arrival = (u32, Vec<u8>, u8);
++
++#[derive(Default)]
++pub struct TestVoice {
++    recording: Option<Vec<f32>>,
++    clip: Vec<(Vec<u8>, u8)>,
++    /// Next clip frame, or (past the end) a pause.
++    next: usize,
++    pause: usize,
++    seq: u32,
++    made_at: Option<Instant>,
++    in_flight: VecDeque<(Instant, u32, Vec<u8>, u8)>,
++    rng: u32,
++}
++
++impl TestVoice {
++    /// Follows the UI; returns the status line.
++    pub fn control(&mut self, c: &mut Control) -> String {
++        if std::mem::take(&mut c.record) {
++            self.recording = Some(Vec::with_capacity(RATE as usize * MAX_CLIP.as_secs() as usize));
++        }
++        let full = self.recording.as_ref().is_some_and(|r| r.len() >= RATE as usize * MAX_CLIP.as_secs() as usize);
++        if (std::mem::take(&mut c.stop_record) || full)
++            && let Some(pcm) = self.recording.take()
++        {
++            self.clip = encode(&pcm).unwrap_or_default();
++            (self.next, self.pause) = (0, 0);
++        }
++        let secs = |frames: usize| frames as f32 * FRAME as f32 / RATE as f32;
++        match (&self.recording, &c.at) {
++            (Some(r), _) => crate::tr!("registro… {:.1} s", "recording… {:.1} s", r.len() as f32 / RATE as f32),
++            (None, _) if self.clip.is_empty() => crate::tr!("nessuna registrazione", "nothing recorded"),
++            (None, None) => crate::tr!("registrazione di {:.1} s, non piazzata", "{:.1} s recorded, not placed", secs(self.clip.len())),
++            (None, Some((p, _))) => crate::tr!(
++                "suona da ({:.0}, {:.0}, {:.0}), {:.1} s in loop",
++                "playing from ({:.0}, {:.0}, {:.0}), {:.1} s looped",
++                p[0],
++                p[1],
++                p[2],
++                secs(self.clip.len())
++            ),
++        }
++    }
++
++    /// 10 ms of our processed microphone, while recording.
++    pub fn record(&mut self, half: &[f32]) {
++        if let Some(r) = &mut self.recording {
++            r.extend_from_slice(half);
++        }
++    }
++
++    fn random(&mut self) -> f32 {
++        self.rng = self.rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
++        (self.rng >> 8) as f32 / (1u32 << 24) as f32
++    }
++
++    /// The frames that arrive by `now`.
++    pub fn arrivals(&mut self, c: &Control, now: Instant, out: &mut Vec<Arrival>) {
++        if c.at.is_none() || self.clip.is_empty() || self.recording.is_some() {
++            self.made_at = None;
++            self.in_flight.clear();
++            return;
++        }
++        let mut t = *self.made_at.get_or_insert(now);
++        if now.duration_since(t) > Duration::from_millis(250) {
++            t = now; // we stalled: don't send a burst of old audio
++        }
++        while t + MESSAGE <= now {
++            t += MESSAGE;
++            let lost = self.random() * 100.0 < c.loss_pct;
++            let late = Duration::from_secs_f32(self.random() * c.jitter_ms.max(0.0) / 1000.0);
++            for _ in 0..2 {
++                let seq = self.seq;
++                self.seq = self.seq.wrapping_add(1);
++                if self.next >= self.clip.len() {
++                    // A pause between plays: nothing sent, as with a quiet speaker.
++                    self.pause += 1;
++                    if self.pause >= 2 * PAUSE_MESSAGES {
++                        (self.next, self.pause) = (0, 0);
++                    }
++                    continue;
++                }
++                let (opus, loud) = self.clip[self.next].clone();
++                self.next += 1;
++                if !lost {
++                    self.in_flight.push_back((t + late, seq, opus, loud));
++                }
++            }
++        }
++        self.made_at = Some(t);
++        let mut keep = VecDeque::new();
++        for m in self.in_flight.drain(..) {
++            if m.0 <= now { out.push((m.1, m.2, m.3)) } else { keep.push_back(m) }
++        }
++        self.in_flight = keep;
++    }
++}
++
++/// Opus frames as the sender makes them, each with how loud it is over the usual voice.
++fn encode(pcm: &[f32]) -> Result<Vec<(Vec<u8>, u8)>, String> {
++    let mut enc = opus::Encoder::new(RATE, opus::Channels::Mono, opus::Application::Voip).map_err(|e| e.to_string())?;
++    enc.set_bitrate(opus::Bitrate::Bits(crate::audio::OPUS_BITRATE)).map_err(|e| e.to_string())?;
++    // The usual voice is what most of the speech in the clip sounds like (the calm part).
++    let mut peaks = Shout::default();
++    let mut speech: Vec<f32> =
++        pcm.chunks_exact(FRAME).map(rms_db).filter(|d| *d > -60.0).map(|d| peaks.peak(d)).collect();
++    speech.sort_by(f32::total_cmp);
++    let usual = speech.get(speech.len() * 2 / 5).copied().unwrap_or(-30.0);
++    let mut shout = Shout::with_usual(usual);
++    let mut packet = [0u8; 1000];
++    let mut out = Vec::new();
++    for f in pcm.chunks_exact(FRAME) {
++        let loud = shout.push(rms_db(f)).round().min(255.0) as u8;
++        let n = enc.encode_float(f, &mut packet).map_err(|e| e.to_string())?;
++        out.push((packet[..n].to_vec(), loud));
++    }
++    Ok(out)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn a_clip_of_talk_then_shout_reads_calm_then_loud() {
++        // A quiet breath, 5 s of calm talk at about -30 dBFS, 3 s of shouting at -12.
++        let tone = |amp: f32, secs: f32| -> Vec<f32> {
++            (0..(secs * RATE as f32) as usize).map(|i| amp * (i as f32 * 0.05).sin() * (1.0 + (i as f32 * 0.0008).sin()) * 0.5).collect()
++        };
++        let mut pcm = tone(0.004, 0.5);
++        pcm.extend(tone(0.045, 5.0));
++        pcm.extend(tone(0.36, 3.0));
++        let clip = encode(&pcm).unwrap();
++        let calm = clip[25..275].iter().map(|c| c.1).max().unwrap();
++        let shout = clip[300..].iter().map(|c| c.1).max().unwrap();
++        assert!(calm <= 1, "calm talk read as +{calm} dB");
++        assert!(shout >= 12, "shout read as +{shout} dB");
++    }
++
++    #[test]
++    fn arrives_two_by_two_late_and_lossy() {
++        let mut v = TestVoice { clip: vec![(vec![1], 0); 100], ..TestVoice::default() };
++        let c = Control { at: Some(([0.0; 3], Env::default())), jitter_ms: 30.0, loss_pct: 20.0, ..Control::default() };
++        let start = Instant::now();
++        let mut got = Vec::new();
++        for ms in (0..=2000).step_by(5) {
++            v.arrivals(&c, start + Duration::from_millis(ms), &mut got);
++        }
++        // 2 s = 50 messages = 100 frames made, about a fifth lost, all of them by 2 s + jitter.
++        assert!((60..=96).contains(&got.len()), "{}", got.len());
++        let seqs: Vec<u32> = got.iter().map(|g| g.0).collect();
++        assert!(seqs.windows(2).any(|w| w[1] < w[0]) || c.jitter_ms < 41.0, "jitter can reorder");
++        assert!(seqs.iter().all(|&s| s < 100));
++    }
++}
+diff --git a/crates/protocol/src/lib.rs b/crates/protocol/src/lib.rs
+index e45261c..68b4cb9 100644
+--- a/crates/protocol/src/lib.rs
++++ b/crates/protocol/src/lib.rs
+@@ -28,6 +28,9 @@ pub const MAX_PACKET: usize = 1200;
+ pub type Vec3 = [f32; 3];
+ pub type PlayerId = u16;
+ 
++/// Sent by the server instead of a real id for the echo test bot.
++pub const ECHO_ID: PlayerId = PlayerId::MAX;
++
+ /// Names and party names are cut to this many bytes by the server.
+ pub const MAX_NAME: usize = 32;
+ /// Players listed in one roster; keeps the datagram under [`MAX_PACKET`].
+diff --git a/crates/server/src/lib.rs b/crates/server/src/lib.rs
+index b76dd49..275a7b2 100644
+--- a/crates/server/src/lib.rs
++++ b/crates/server/src/lib.rs
+@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
+ 
+ use vc_protocol::crypto::{self, KeyPair, Session};
+ use vc_protocol::{
+-    ClientMsg, Env, MAX_PACKET, MAX_ROSTER, PlayerId, RosterEntry, ServerMsg, VERSION,
++    ClientMsg, ECHO_ID, Env, MAX_PACKET, MAX_ROSTER, PlayerId, RosterEntry, ServerMsg, VERSION,
+     Vec3, clean_name, handshake,
+ };
+ 
+@@ -33,6 +33,7 @@ const PUNCH_FOR: Duration = Duration::from_secs(15);
+ 
+ pub struct Config {
+     pub range: f32,
++    pub echo: bool,
+     /// Mixed into every session's keys; all zeros for an open server.
+     pub psk: [u8; 32],
+     /// Joined players allowed in total; `usize::MAX` for no limit. The
+@@ -43,7 +44,7 @@ pub struct Config {
+ 
+ impl Default for Config {
+     fn default() -> Self {
+-        Self { range: vc_protocol::RANGE, psk: [0; 32], max_players: Arc::new(AtomicUsize::new(usize::MAX)) }
++        Self { range: vc_protocol::RANGE, echo: false, psk: [0; 32], max_players: Arc::new(AtomicUsize::new(usize::MAX)) }
+     }
+ }
+ 
+@@ -70,6 +71,9 @@ struct Client {
+     name: String,
+     party: String,
+     pos: Option<Vec3>,
++    /// Echo mode: where the client's own voice is played back from
++    /// (where it first spoke).
++    echo_anchor: Option<Vec3>,
+ }
+ 
+ struct Peer {
+@@ -248,6 +252,7 @@ impl Relay {
+         if let ClientMsg::Hello { version, room, name } = msg {
+             return self.hello(from, version, room, name);
+         }
++        let echo = self.cfg.echo;
+         let Some(c) = self.peers.get_mut(&from).and_then(|p| p.client.as_mut()) else {
+             return self.send(from, &ServerMsg::Reject { reason: "not joined".into() });
+         };
+@@ -256,6 +261,15 @@ impl Relay {
+             ClientMsg::Pose { pos } => c.pos = pos,
+             ClientMsg::Voice { seq, pos, env, opus } => {
+                 c.pos = pos;
++                // Anchor at the first word, not the first pose: while a save
++                // loads the player can briefly report a placeholder position.
++                if echo && c.echo_anchor.is_none()
++                    && let Some(p) = pos
++                {
++                    c.echo_anchor = Some(p);
++                    let msg = format!("[{}] {} echo anchored at {p:?}", c.room, c.name);
++                    (self.log)(Level::Info, msg);
++                }
+                 self.relay(from, seq, pos, env, opus);
+             }
+             ClientMsg::Party { name } => {
+@@ -304,6 +318,7 @@ impl Relay {
+                 name,
+                 party: String::new(),
+                 pos: None,
++                echo_anchor: None,
+             });
+         }
+         self.send(from, &ServerMsg::Welcome { id, range });
+@@ -319,7 +334,7 @@ impl Relay {
+         for _ in 0..PlayerId::MAX {
+             let id = self.next_id;
+             self.next_id = self.next_id.wrapping_add(1).max(1);
+-            if !self.clients().any(|(_, c)| c.id == id) {
++            if id != ECHO_ID && !self.clients().any(|(_, c)| c.id == id) {
+                 return Some(id);
+             }
+         }
+@@ -346,10 +361,15 @@ impl Relay {
+             })
+             .collect();
+         let id = speaker.id;
++        let echo = speaker.echo_anchor;
+         for (to, party) in targets {
+             let msg = ServerMsg::Voice { from: id, party, seq, pos, env, opus: opus.clone() };
+             self.send(to, &msg);
+         }
++        if let Some(anchor) = echo {
++            let msg = ServerMsg::Voice { from: ECHO_ID, party: false, seq, pos: Some(anchor), env, opus };
++            self.send(from, &msg);
++        }
+     }
+ 
+     fn broadcast_roster(&mut self, room: &str) {
+diff --git a/crates/server/src/main.rs b/crates/server/src/main.rs
+index bb69a42..ec9ec30 100644
+--- a/crates/server/src/main.rs
++++ b/crates/server/src/main.rs
+@@ -1,4 +1,4 @@
+-//! Standalone voice relay: `vc-server [--bind ADDR:PORT] [--range M] [--key FILE]`.
++//! Standalone voice relay: `vc-server [--bind ADDR:PORT] [--range M] [--key FILE] [--echo]`.
+ 
+ use std::net::{SocketAddr, UdpSocket};
+ use std::path::PathBuf;
+@@ -12,6 +12,7 @@ use vc_server::{Config, Level, Relay};
+ struct Args {
+     bind: SocketAddr,
+     range: f32,
++    echo: bool,
+     key: PathBuf,
+ }
+ 
+@@ -19,7 +20,7 @@ fn main() {
+     let args = match parse_args() {
+         Ok(c) => c,
+         Err(e) => {
+-            eprintln!("{e}\nusage: vc-server [--bind ADDR:PORT] [--range METRES] [--key FILE]");
++            eprintln!("{e}\nusage: vc-server [--bind ADDR:PORT] [--range METRES] [--key FILE] [--echo]");
+             std::process::exit(2);
+         }
+     };
+@@ -33,12 +34,13 @@ fn main() {
+     });
+     sock.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+     println!(
+-        "listening on {} (range {} m), key fingerprint {}",
++        "listening on {} (range {} m{}), key fingerprint {}",
+         args.bind,
+         args.range,
++        if args.echo { ", echo on" } else { "" },
+         crypto::fingerprint(&key.public)
+     );
+-    let cfg = Config { range: args.range, ..Config::default() };
++    let cfg = Config { range: args.range, echo: args.echo, ..Config::default() };
+     let log = Box::new(|level: Level, msg: String| match level {
+         Level::Info => println!("{msg}"),
+         Level::Warn => println!("warning: {msg}"),
+@@ -50,6 +52,7 @@ fn parse_args() -> Result<Args, String> {
+     let mut a = Args {
+         bind: SocketAddr::from(([0, 0, 0, 0], DEFAULT_PORT)),
+         range: vc_protocol::RANGE,
++        echo: false,
+         key: PathBuf::from("vc-server.key"),
+     };
+     let mut args = std::env::args().skip(1);
+@@ -59,6 +62,7 @@ fn parse_args() -> Result<Args, String> {
+             "--bind" => a.bind = val()?.parse().map_err(|e| format!("--bind: {e}"))?,
+             "--range" => a.range = val()?.parse().map_err(|e| format!("--range: {e}"))?,
+             "--key" => a.key = val()?.into(),
++            "--echo" => a.echo = true,
+             _ => return Err(format!("unknown argument {arg}")),
+         }
+     }
+diff --git a/crates/server/tests/relay.rs b/crates/server/tests/relay.rs
+index 8830e00..303b0dd 100644
+--- a/crates/server/tests/relay.rs
++++ b/crates/server/tests/relay.rs
+@@ -235,12 +235,12 @@ impl Drop for ServerProc {
+ }
+ 
+ #[test]
+-fn binary_relays_and_rejects() {
++fn binary_echo_and_rejects() {
+     let port = 47_952;
+     let key = std::env::temp_dir().join(format!("vc-test-{port}-{}.key", std::process::id()));
+     let _ = std::fs::remove_file(&key);
+     let child = Command::new(env!("CARGO_BIN_EXE_vc-server"))
+-        .args(["--bind", &format!("127.0.0.1:{port}"), "--key", key.to_str().unwrap()])
++        .args(["--bind", &format!("127.0.0.1:{port}"), "--key", key.to_str().unwrap(), "--echo"])
+         .stdout(std::process::Stdio::null())
+         .spawn()
+         .unwrap();
+@@ -248,12 +248,10 @@ fn binary_relays_and_rejects() {
+     std::thread::sleep(Duration::from_millis(300));
+     let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+ 
+-    let (mut a, mut b) = (Client::connect(addr), Client::connect(addr));
+-    let id = a.join("r", "a").unwrap();
+-    b.join("r", "b").unwrap();
+-    a.drain();
++    let mut a = Client::connect(addr);
++    a.join("r", "solo").unwrap();
+     a.send(voice(1, Some(5.0)));
+-    assert_eq!(voices(&b.drain()), vec![(id, false)]);
++    assert_eq!(voices(&a.drain()), vec![(vc_protocol::ECHO_ID, false)]);
+ 
+     let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+     raw.connect(addr).unwrap();

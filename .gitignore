@@ -9,3 +9,7 @@ out/
 *.exp
 /vendor/xwin/
 /dist/
+vc-server.key
+/third_party/steamaudio/
+# Nexus page texts and the publishing checklist: kept local
+/tools/nexus/

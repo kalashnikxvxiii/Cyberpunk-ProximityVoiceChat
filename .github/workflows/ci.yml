@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y luajit
+      - run: tools/fetch-steamaudio.sh
+      - run: cargo test --locked
+      - run: luajit cet/tests/acoustics_test.lua
+
+  build:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: tools/fetch-steamaudio.sh
+        shell: bash
+      - run: cargo build --release --locked -p voice-chat -p vc-server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voicechat-windows
+          path: |
+            target/release/VoiceChat.dll
+            target/release/vc-server.exe
+            third_party/steamaudio/lib/windows-x64/phonon.dll

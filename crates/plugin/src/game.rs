@@ -1,6 +1,6 @@
 //! Reads the local player's pose from the engine. Call only from the game thread.
 
-use red4ext_rs::types::{GameInstance, Ref};
+use red4ext_rs::types::{EntityId, GameInstance, Ref};
 use red4ext_rs::{InvokeError, NativeRepr, ScriptClass, call, class_kind};
 
 /// Opaque handle to the engine's `PlayerPuppet`; we never touch its fields.
@@ -42,6 +42,10 @@ impl Pose {
     pub fn pos(&self) -> [f32; 3] {
         [self.position.x, self.position.y, self.position.z]
     }
+
+    pub fn forward_vec(&self) -> [f32; 3] {
+        [self.forward.x, self.forward.y, self.forward.z]
+    }
 }
 
 /// Where the active camera looks. Unlike the player's body, it follows the
@@ -62,4 +66,22 @@ pub fn player_pose() -> Result<Option<Pose>, InvokeError> {
         position: call!(player, "GetWorldPosition" () -> Vector4)?,
         forward: call!(player, "GetWorldForward" () -> Vector4)?,
     }))
+}
+
+/// Opaque handle to an engine entity.
+pub struct Entity;
+
+unsafe impl ScriptClass for Entity {
+    type Kind = class_kind::Scripted;
+    const NAME: &'static str = "entEntity";
+}
+
+/// Where an entity (by its EntityID hash) is now; `Ok(None)` if it isn't in our world.
+pub fn entity_position(id: u64) -> Result<Option<[f32; 3]>, InvokeError> {
+    let entity = call!("ScriptGameInstance"::"FindEntityByID" (GameInstance::new(), EntityId::from(id)) -> Ref<Entity>)?;
+    if entity.is_null() {
+        return Ok(None);
+    }
+    let p = call!(entity, "GetWorldPosition" () -> Vector4)?;
+    Ok([p.x, p.y, p.z].iter().all(|v| v.is_finite()).then_some([p.x, p.y, p.z]))
 }

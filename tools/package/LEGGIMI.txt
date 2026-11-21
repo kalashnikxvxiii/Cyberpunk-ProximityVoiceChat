@@ -1,28 +1,53 @@
-VoiceChat @VERSION@ (test) - voice chat di prossimita' per NightCoop
-=====================================================================
+VoiceChat @VERSION@ - chat vocale di prossimita' per NightCoop
+================================================================
 
-REQUISITI
-- Cyberpunk 2077 con NightCoop gia' funzionante (RED4ext e' incluso in NightCoop).
-- Cuffie consigliate: senza, gli altri sentono la propria voce dalle tue casse.
+COSA SERVE
+- Cyberpunk 2077 con NightCoop (RED4ext e' incluso in NightCoop).
+- Cyber Engine Tweaks (CET): menu, configurazione guidata, icona nell'HUD,
+  muri e riverbero. Senza CET la voce funziona lo stesso (tasto: mouse 4).
+- Tutti i giocatori della sessione devono avere VoiceChat, stessa versione.
 
 INSTALLAZIONE
 1. Chiudi il gioco.
-2. Estrai lo zip nella cartella del gioco, quella che contiene "bin" e "red4ext".
-   Deve risultare: <gioco>\red4ext\plugins\VoiceChat\VoiceChat.dll
-3. Avvia il gioco come al solito.
+2. Estrai lo zip nella cartella del gioco (quella con "bin" e "red4ext").
+   Se aggiorni, sovrascrivi pure: le impostazioni sono in
+   red4ext\plugins\VoiceChat\config.ini e non vengono toccate.
+3. Avvia il gioco e apri l'overlay di CET: parte la configurazione guidata
+   (microfono, cuffie, tasto per parlare). Un minuto e hai finito.
 
 USO
-- Tieni premuto il tasto laterale del mouse (mouse 4, quello in basso) per parlare.
-- Senti gli altri giocatori entro 48 metri; il volume cala con la distanza
-  e la voce arriva da sinistra/destra in base a dove si trovano.
-- Microfono e uscita sono quelli predefiniti di Windows.
+- Ospita o entra in una sessione co-op di NightCoop: la chat vocale si
+  collega da sola, tramite NightCoop. Nessun indirizzo da scambiarsi,
+  nessuna porta da aprire.
+- Nella lobby co-op vi sentite tutti. Nel mondo senti chi e' vicino, dalla
+  direzione in cui si trova; i muri spessi bloccano la voce, porte e
+  aperture la lasciano passare attutita.
+- Tasto per parlare: mouse 4 (il laterale del mouse) o quello che scegli.
+- Party: stesso nome di party = vi sentite a qualsiasi distanza (come una
+  radio). Menu CET > VoiceChat > Party.
 
-CONFIGURAZIONE (red4ext\plugins\VoiceChat\config.ini, a gioco chiuso)
-- ptt: tasto per parlare (mouse4, mouse5, una lettera, F1-F12).
-- volume / mic_gain: volume degli altri / del tuo microfono.
-- party: scrivi lo stesso nome di party degli amici per sentirvi a qualsiasi distanza.
-- Non cambiare "server" e "room" se non te lo chiedono.
+SE NON VI SENTITE
+Menu CET > VoiceChat > Diagnostica: in alto chi ha la mod e come va la voce
+(latenza, perdite), sotto una tabella con cosa e' successo e cosa fare.
+Le cause piu' comuni:
+- NightCoop troppo vecchio, o il suo SDK per le mod spento: aggiorna
+  NightCoop e lascia l'SDK attivo nelle sue impostazioni.
+- L'host ha spento le mod per la sessione.
+- Versioni diverse della mod.
+- Il tasto per parlare e' anche un tasto di NightCoop: sceglierne un altro.
 
-SE QUALCOSA NON VA
-Mandami il file piu' recente di:
-  <gioco>\red4ext\logs\voicechat-*.log
+UN SERVER TUO (FACOLTATIVO, SENZA NIGHTCOOP)
+La modalita' manuale (Menu CET > VoiceChat > Generale) si collega a un
+vc-server (zip VoiceChat-relay) che chiunque abbia un PC o un server
+raggiungibile puo' avviare.
+
+SICUREZZA E PRIVACY
+- In una sessione NightCoop la mod non ha codice di rete suo: la voce passa
+  dai collegamenti cifrati di NightCoop, sigillata di nuovo con una chiave
+  che l'host estrae per ogni sessione. Non apre porte e non mostra il tuo
+  indirizzo IP a nessuno. L'host, come per ogni mod co-op, puo' vedere i
+  dati della mod.
+- Ti sente solo chi e' nella stessa sessione NightCoop e ha la mod.
+
+FILE DI LOG
+<gioco>\red4ext\logs\voicechat-*.log

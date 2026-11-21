@@ -1,0 +1,13 @@
+[package]
+name = "vc-rendezvous"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+argon2 = "0.6"
+vc-protocol = { path = "../protocol" }
+hkdf = "0.13"
+sha2 = "0.11"

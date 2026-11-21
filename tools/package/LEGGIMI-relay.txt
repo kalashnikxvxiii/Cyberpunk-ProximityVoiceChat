@@ -1,0 +1,25 @@
+VoiceChat @VERSION@ - server di inoltro (facoltativo)
+======================================================
+
+Serve solo se gli ospiti non riescono a collegarsi direttamente all'host.
+Va avviato su un PC o un server raggiungibile da internet.
+
+AVVIO
+  Windows:  vc-server.exe
+  Linux:    ./vc-server
+Opzioni: --bind 0.0.0.0:47900   --range 48   --key vc-server.key
+Al primo avvio crea la chiave (vc-server.key, tienila) e stampa
+l'impronta, per esempio:  key fingerprint K3QF-9X2M-TV7A-0D4R
+
+RETE
+Apri la porta UDP 47900 (o quella scelta) sul router e nel firewall.
+
+NEL GIOCO
+Tutti tolgono "Segui la sessione NightCoop" in Menu CET > VoiceChat >
+Generale (modalita' manuale) e scrivono lo stesso codice stanza e il
+server:
+  indirizzo:47900#IMPRONTA      (es. 203.0.113.7:47900#K3QF-9X2M-TV7A-0D4R)
+In una sessione NightCoop non serve: la voce passa da NightCoop.
+
+Il server smista la voce ma non puo' ascoltarla: e' cifrata da un
+giocatore all'altro.

@@ -1,0 +1,18 @@
+[package]
+name = "vc-acoustics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# Valve's Steam Audio: how sound travels through the game world (walls,
+# glass, doors, rebounds, reverb) and real 3D sound in headphones (HRTF).
+# The raw bindings must match the SDK in third_party/steamaudio exactly
+# (tools/fetch-steamaudio.sh): the safe `audionimbus` wrapper is not used,
+# it never hands Steam Audio the surface material and crashes it.
+[dependencies]
+audionimbus-sys = { version = "=4.8.1", default-features = false }
+
+[dev-dependencies]
+vc-dsp = { path = "../dsp" }

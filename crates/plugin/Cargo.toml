@@ -2,6 +2,8 @@
 name = "voice-chat"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]
@@ -13,5 +15,10 @@ red4ext-rs = { git = "https://github.com/jac3km4/red4ext-rs", rev = "v0.11.2" }
 cpal = "0.18"
 opus = "0.4"
 ringbuf = "0.5"
-windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse"] }
+windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_System_SystemInformation", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_Media_Audio", "Win32_System_Com", "Win32_System_Memory", "Win32_System_Diagnostics_Debug"] }
 vc-protocol = { path = "../protocol" }
+
+vc-coop = { path = "../coop" }
+vc-dsp = { path = "../dsp" }
+vc-acoustics = { path = "../acoustics" }
+vc-rendezvous = { path = "../rendezvous" }

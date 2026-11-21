@@ -1,0 +1,82 @@
+VoiceChat @VERSION@ - two-player test
+=====================================
+
+Thanks for helping! This is a test build of VoiceChat, the proximity voice
+chat for NightCoop. It takes about 30 minutes, together, in a co-op
+session.
+
+BEFORE YOU START
+1. You need Cyberpunk 2077 with an up-to-date NightCoop and Cyber Engine
+   Tweaks (CET).
+2. Close the game and extract VoiceChat-@VERSION@.zip into the game folder
+   (the one with "bin" and "red4ext").
+3. Start the game and open the CET overlay: the guided setup asks for
+   microphone, headphones and talk key (mouse 4 by default).
+4. Both of you use this same zip.
+
+The mod's menu is in CET > VoiceChat. The tabs you need are "General" and
+"Diagnostics".
+
+THE TESTS
+One hosts the session, the other joins. For each item write down ok or not,
+and a few words on what you heard. Voice starts only after the host has
+pressed "Start" and the world has loaded: in the lobby the other player
+shows as "(no VoiceChat)", and that's normal.
+
+ 1. Connection. General reads "host, 1 other players (1 with VoiceChat)"
+    or "guest, ...". In Diagnostics, at the top, there is the other
+    player's name.
+ 2. Take turns talking up close: you both hear each other well.
+    The VoiceChat icon on screen lights up when someone talks.
+ 3. Distance. Walk away slowly, on foot: the voice drops quickly in the
+    first 10-15 metres, then fades out around 50. Coming back it returns.
+    Shop window: one inside a shop, the other outside in front of the
+    window. The voice must arrive weak and dark. If it arrives clear, the
+    one outside looks at the window and presses CET > VoiceChat >
+    Environment > "What's in front of me? (collision groups)": take a
+    screenshot of the list.
+    Shout: in an open, quiet place walk away beyond 50 metres and shout:
+    the other must hear you, faintly.
+    Reverb: in a club with music, in a furnished room or in a street with
+    traffic it must not be heard; in a concrete tunnel it must.
+ 4. Direction and walls. One talks behind a wall, then from another room
+    with the door open: the voice comes from the right side and is muffled.
+ 5. Party. In CET > VoiceChat > Party both type the same party name and
+    press "Create / join", then walk away beyond 20 metres: you still hear
+    each other, like a radio. Press "Leave the party": from afar you no
+    longer hear each other.
+ 6. Quality. Talk for a couple of minutes, then each copies the "Voice:"
+    line from Diagnostics (a screenshot is fine too).
+ 7. Loading. One talks without stopping; the other fast travels or loads a
+    save. Afterwards the voice must resume at once, with no delay and no
+    old pieces.
+ 8. The one who joined leaves the session and joins again: the chat comes
+    back by itself.
+ 9. Without the mod. The one who joined closes the game, moves the folder
+    red4ext\plugins\VoiceChat out, joins the session again: the host must
+    see "(no VoiceChat)" and co-op must work as always. Then put the folder
+    back.
+10. Mods turned off by the host. The host turns mods off for the session
+    in NightCoop's settings ("sdk_session"): a warning appears in
+    Diagnostics. Turned back on, the warning goes away and the voice
+    returns.
+11. If there are three of you: the two guests hear each other, each from
+    the right side.
+12. Quit the game from the menu: no crash.
+
+If something goes wrong, look at the Diagnostics tab: it usually says what
+happened and what to do. Write it down and carry on.
+
+WHAT TO SEND AT THE END
+- The list of items with ok or not, and the notes.
+- The "Voice:" line from item 6.
+- The log files, with the game closed:
+  - <game folder>\red4ext\logs\voicechat-*.log (all of them)
+  - NightCoop's logs (NightCoop's "logs" folder, the one with
+    nightcoop-mods.txt)
+  The logs contain the names of the session's players and what the mod
+  did, not the audio. Feel free to read them before sending.
+
+AFTER THE TEST
+To remove the mod delete red4ext\plugins\VoiceChat and
+bin\x64\plugins\cyber_engine_tweaks\mods\VoiceChat.
