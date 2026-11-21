@@ -15,7 +15,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # rustup comes with the runners: no third-party action in the build.
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
       - run: tools/fetch-steamaudio.sh
         shell: bash
       - run: cargo build --release --locked -p voice-chat -p vc-server
@@ -39,7 +40,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # rustup comes with the runners: no third-party action in the build.
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
       - name: Check the tag against Cargo.toml and CHANGELOG.md
         id: version
         run: |
